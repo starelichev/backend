@@ -3,6 +3,12 @@ using System.Collections.Generic;
 
 namespace backend.Contracts
 {
+    public class TimeInterval
+    {
+        public DateTime Start { get; set; }
+        public DateTime End { get; set; }
+    }
+
     public class VisualizationDataResponse
     {
         public List<VisualizationDataPoint> Data { get; set; } = new List<VisualizationDataPoint>();

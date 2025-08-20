@@ -25,7 +25,8 @@ namespace backend.Controllers
             [FromQuery] string? meterType = null,
             [FromQuery] long[]? objectIds = null,
             [FromQuery] long[]? meterIds = null,
-            [FromQuery] string[]? parameters = null)
+            [FromQuery] string[]? parameters = null,
+            [FromQuery] string aggregation = "hour") // minute, hour, day
         {
             try
             {
@@ -50,9 +51,9 @@ namespace backend.Controllers
                 // Получаем данные в зависимости от типа счетчика
                 var data = meterType?.ToLower() switch
                 {
-                    "gas" => GetGasData(startDate, endDate, objectIds, meterIds, parameters),
-                    "electrical" => GetElectricData(startDate, endDate, objectIds, meterIds, parameters),
-                    _ => GetElectricData(startDate, endDate, objectIds, meterIds, parameters) // по умолчанию электрические
+                    "gas" => GetGasData(startDate, endDate, objectIds, meterIds, parameters, aggregation),
+                    "electrical" => GetElectricData(startDate, endDate, objectIds, meterIds, parameters, aggregation),
+                    _ => GetElectricData(startDate, endDate, objectIds, meterIds, parameters, aggregation) // по умолчанию электрические
                 };
 
                 return Ok(new VisualizationDataResponse
@@ -135,7 +136,7 @@ namespace backend.Controllers
             };
         }
 
-        private List<VisualizationDataPoint> GetElectricData(DateTime startDate, DateTime endDate, long[]? objectIds, long[]? meterIds, string[]? parameters)
+        private List<VisualizationDataPoint> GetElectricData(DateTime startDate, DateTime endDate, long[]? objectIds, long[]? meterIds, string[]? parameters, string aggregation)
         {
             var query = _context.ElectricityDeviceData
                 .Include(ed => ed.Device)
@@ -158,47 +159,79 @@ namespace backend.Controllers
                 .OrderBy(ed => ed.TimeReading)
                 .ToList();
 
-            var data = rawData.Select(ed => new VisualizationDataPoint
-            {
-                Timestamp = ed.TimeReading,
-                DeviceId = ed.DeviceId,
-                DeviceName = ed.Device.Name,
-                ObjectName = ed.Device.Parent != null ? ed.Device.Parent.Name : "Unknown",
-                Values = new Dictionary<string, decimal>
-                {
-                    ["UL1N"] = ed.UL1N,
-                    ["UL2N"] = ed.UL2N,
-                    ["UL3N"] = ed.UL3N,
-                    ["UL1L2"] = ed.UL1L2,
-                    ["UL2L3"] = ed.UL2L3,
-                    ["UL3L1"] = ed.UL3L1,
-                    ["IL1"] = ed.IL1,
-                    ["IL2"] = ed.IL2,
-                    ["IL3"] = ed.IL3,
-                    ["PL1"] = ed.PL1,
-                    ["PL2"] = ed.PL2,
-                    ["PL3"] = ed.PL3,
-                    ["PSum"] = ed.PSum,
-                    ["QL1"] = ed.QL1,
-                    ["QL2"] = ed.QL2,
-                    ["QL3"] = ed.QL3,
-                    ["QSum"] = ed.QSum,
-                    ["AllEnergy"] = ed.AllEnergy,
-                    ["ReactiveEnergySum"] = ed.ReactiveEnergySum,
-                    ["Freq"] = ed.Freq,
-                    ["Aq1"] = ed.Aq1 ?? 0,
-                    ["Aq2"] = ed.Aq2 ?? 0,
-                    ["Aq3"] = ed.Aq3 ?? 0,
-                    ["FundPfCf1"] = ed.FundPfCf1 ?? 0,
-                    ["FundPfCf2"] = ed.FundPfCf2 ?? 0,
-                    ["FundPfCf3"] = ed.FundPfCf3 ?? 0
-                }
-            }).ToList();
+            if (rawData.Count == 0) return new List<VisualizationDataPoint>();
 
-            return data;
+            // Создаем временные интервалы для агрегации
+            var intervals = CreateTimeIntervals(startDate, endDate, aggregation);
+            
+            // Получаем все устройства одним запросом для оптимизации
+            var deviceIds = rawData.Select(ed => ed.DeviceId).Distinct().ToArray();
+            var devices = _context.Devices
+                .Include(d => d.Parent)
+                .Where(d => deviceIds.Contains(d.Id))
+                .ToDictionary(d => d.Id, d => d);
+            
+            // Агрегируем данные по интервалам
+            var result = new List<VisualizationDataPoint>();
+            
+            foreach (var interval in intervals)
+            {
+                foreach (var deviceId in meterIds ?? new long[0])
+                {
+                    var deviceData = rawData.Where(ed => ed.DeviceId == deviceId).ToList();
+                    var intervalData = deviceData.Where(ed => 
+                        ed.TimeReading >= interval.Start && ed.TimeReading < interval.End).ToList();
+                    
+                    if (intervalData.Count > 0)
+                    {
+                        // Берем первое значение каждого интервала
+                        var firstItem = intervalData.First();
+                        devices.TryGetValue(deviceId, out var device);
+                        
+                        result.Add(new VisualizationDataPoint
+                        {
+                            Timestamp = interval.Start,
+                            DeviceId = deviceId,
+                            DeviceName = device?.Name ?? $"Device {deviceId}",
+                            ObjectName = device?.Parent?.Name ?? "Unknown",
+                            Values = new Dictionary<string, decimal>
+                            {
+                                ["UL1N"] = firstItem.UL1N,
+                                ["UL2N"] = firstItem.UL2N,
+                                ["UL3N"] = firstItem.UL3N,
+                                ["UL1L2"] = firstItem.UL1L2,
+                                ["UL2L3"] = firstItem.UL2L3,
+                                ["UL3L1"] = firstItem.UL3L1,
+                                ["IL1"] = firstItem.IL1,
+                                ["IL2"] = firstItem.IL2,
+                                ["IL3"] = firstItem.IL3,
+                                ["PL1"] = firstItem.PL1,
+                                ["PL2"] = firstItem.PL2,
+                                ["PL3"] = firstItem.PL3,
+                                ["PSum"] = firstItem.PSum,
+                                ["QL1"] = firstItem.QL1,
+                                ["QL2"] = firstItem.QL2,
+                                ["QL3"] = firstItem.QL3,
+                                ["QSum"] = firstItem.QSum,
+                                ["AllEnergy"] = firstItem.AllEnergy,
+                                ["ReactiveEnergySum"] = firstItem.ReactiveEnergySum,
+                                ["Freq"] = firstItem.Freq,
+                                ["Aq1"] = firstItem.Aq1 ?? 0,
+                                ["Aq2"] = firstItem.Aq2 ?? 0,
+                                ["Aq3"] = firstItem.Aq3 ?? 0,
+                                ["FundPfCf1"] = firstItem.FundPfCf1 ?? 0,
+                                ["FundPfCf2"] = firstItem.FundPfCf2 ?? 0,
+                                ["FundPfCf3"] = firstItem.FundPfCf3 ?? 0
+                            }
+                        });
+                    }
+                }
+            }
+
+            return result;
         }
 
-        private List<VisualizationDataPoint> GetGasData(DateTime startDate, DateTime endDate, long[]? objectIds, long[]? meterIds, string[]? parameters)
+        private List<VisualizationDataPoint> GetGasData(DateTime startDate, DateTime endDate, long[]? objectIds, long[]? meterIds, string[]? parameters, string aggregation)
         {
             var query = _context.GasDeviceData
                 .Include(gd => gd.Device)
@@ -225,8 +258,8 @@ namespace backend.Controllers
             {
                 Timestamp = gd.ReadingTime,
                 DeviceId = gd.DeviceId,
-                DeviceName = gd.Device.Name,
-                ObjectName = gd.Device.Parent != null ? gd.Device.Parent.Name : "Unknown",
+                DeviceName = gd.Device?.Name ?? $"Device {gd.DeviceId}",
+                ObjectName = gd.Device?.Parent?.Name ?? "Unknown",
                 Values = new Dictionary<string, decimal>
                 {
                     ["TemperatureGas"] = gd.TemperatureGas,
@@ -240,6 +273,67 @@ namespace backend.Controllers
             }).ToList();
 
             return data;
+        }
+
+        private List<TimeInterval> CreateTimeIntervals(DateTime startDate, DateTime endDate, string aggregation)
+        {
+            var intervals = new List<TimeInterval>();
+            var currentTime = startDate;
+            
+            // Округляем начало до начала интервала
+            switch (aggregation.ToLower())
+            {
+                case "minute":
+                    currentTime = new DateTime(currentTime.Year, currentTime.Month, currentTime.Day, currentTime.Hour, currentTime.Minute, 0);
+                    break;
+                case "hour":
+                    currentTime = new DateTime(currentTime.Year, currentTime.Month, currentTime.Day, currentTime.Hour, 0, 0);
+                    break;
+                case "day":
+                    currentTime = new DateTime(currentTime.Year, currentTime.Month, currentTime.Day, 0, 0, 0);
+                    break;
+            }
+            
+            while (currentTime <= endDate)
+            {
+                var endTime = currentTime;
+                
+                // Устанавливаем конец интервала
+                switch (aggregation.ToLower())
+                {
+                    case "minute":
+                        endTime = currentTime.AddMinutes(1);
+                        break;
+                    case "hour":
+                        endTime = currentTime.AddHours(1);
+                        break;
+                    case "day":
+                        endTime = currentTime.AddDays(1);
+                        break;
+                }
+                
+                intervals.Add(new TimeInterval
+                {
+                    Start = currentTime,
+                    End = endTime
+                });
+                
+                // Переходим к следующему интервалу
+                switch (aggregation.ToLower())
+                {
+                    case "minute":
+                        currentTime = currentTime.AddMinutes(1);
+                        break;
+                    case "hour":
+                        currentTime = currentTime.AddHours(1);
+                        break;
+                    case "day":
+                        currentTime = currentTime.AddDays(1);
+                        break;
+                }
+            }
+            
+            return intervals;
         }
 
         private List<VisualizationParameter> GetElectricParameters()

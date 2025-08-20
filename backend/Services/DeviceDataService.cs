@@ -2,24 +2,21 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using backend.Hubs;
 using backend.Models;
+using backend.Helpers;
 
 namespace backend.Services;
 
 public interface IDeviceDataService
 {
     Task SendAverageDeviceData();
-    Task StartDataPolling();
-    Task StopDataPolling();
     Task UpdateScanInterval(int newIntervalMs);
 }
 
-public class DeviceDataService : IDeviceDataService, IDisposable
+public class DeviceDataService : IDeviceDataService
 {
     private readonly BmsContext _context;
     private readonly IHubContext<NotificationHub> _hubContext;
     private readonly ILogger<DeviceDataService> _logger;
-    private Timer? _pollingTimer;
-    private int _currentScanInterval = 5000; // По умолчанию 5 секунд
 
     public DeviceDataService(
         BmsContext context, 
@@ -53,22 +50,31 @@ public class DeviceDataService : IDeviceDataService, IDisposable
 
                 if (latestDatum != null)
                 {
-                    var actualValues = new Dictionary<string, double>();
+                    var deviceParameters = new List<object>();
 
-                    // Извлекаем ВСЕ числовые значения из последней записи
+                    // Извлекаем все числовые значения из последней записи
                     foreach (var prop in latestDatum.GetType().GetProperties())
                     {
                         // Проверяем, является ли свойство числовым типом (double, decimal, float)
                         // И исключаем Id, DeviceId, TimeReading и навигационные свойства
-                        if ((prop.PropertyType == typeof(double) || prop.PropertyType == typeof(decimal) || prop.PropertyType == typeof(float)) &&
+                        if ((prop.PropertyType == typeof(double) || prop.PropertyType == typeof(decimal) || prop.PropertyType == typeof(float) ||
+                             prop.PropertyType == typeof(double?) || prop.PropertyType == typeof(decimal?) || prop.PropertyType == typeof(float?)) &&
                             prop.Name != "Id" && prop.Name != "DeviceId" && prop.Name != "TimeReading" && prop.Name != "Device")
                         {
                             var value = prop.GetValue(latestDatum);
-                            if (value != null)
+                            // Отправляем все параметры, даже если значение null
+                            var numericValue = value != null ? Math.Round(Convert.ToDouble(value), 3) : 0.0;
+                            
+                            // Используем готовые хелперы для названий и единиц измерения
+                            deviceParameters.Add(new
                             {
-                                // Получаем значение свойства и округляем до 3 знаков после запятой
-                                actualValues[prop.Name] = Math.Round(Convert.ToDouble(value), 3);
-                            }
+                                parameterName = NameHelper.GetParameterFullName(prop.Name),
+                                parameterShortName = NameHelper.GetParameterShortName(prop.Name),
+                                parameterCode = prop.Name,
+                                value = numericValue,
+                                unit = GetParameterUnit(prop.Name),
+                                hasValue = value != null
+                            });
                         }
                     }
 
@@ -78,7 +84,8 @@ public class DeviceDataService : IDeviceDataService, IDisposable
                         deviceName = device.Name,
                         objectName = device.Parent?.Name,
                         statusColor = device.Active ? "green" : "red",
-                        averageValues = actualValues, // Все параметры из electricity_device_data
+                        averageValues = deviceParameters.ToDictionary(p => ((dynamic)p).parameterCode, p => ((dynamic)p).value), // Для совместимости с фронтендом
+                        parameters = deviceParameters, // Полная информация о параметрах
                         lastUpdate = DateTime.Now
                     });
                 }
@@ -93,77 +100,40 @@ public class DeviceDataService : IDeviceDataService, IDisposable
         }
     }
 
-    public async Task StartDataPolling()
+    private string GetParameterUnit(string parameterName)
     {
-        try
+        return parameterName switch
         {
-            // Получаем среднее значение scan_interval из базы данных
-            var averageScanInterval = await _context.DeviceSettings
-                .Where(ds => ds.ScanInterval > 0)
-                .AverageAsync(ds => (double)ds.ScanInterval);
-
-            // Если нет данных, используем значение по умолчанию
-            _currentScanInterval = (int)Math.Round(averageScanInterval > 0 ? averageScanInterval : 5000);
-            
-            // Останавливаем предыдущий таймер, если он существует
-            _pollingTimer?.Dispose();
-
-            // Создаем новый таймер с текущим интервалом опроса
-            _pollingTimer = new Timer(async _ => await SendAverageDeviceData(), null, 0, _currentScanInterval);
-            
-            _logger.LogInformation($"Device data polling started with interval: {_currentScanInterval}ms (average from database)");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error starting device data polling");
-            // В случае ошибки используем значение по умолчанию
-            _currentScanInterval = 5000;
-            _pollingTimer = new Timer(async _ => await SendAverageDeviceData(), null, 0, _currentScanInterval);
-        }
-    }
-
-    public async Task StopDataPolling()
-    {
-        _pollingTimer?.Dispose();
-        _pollingTimer = null;
+            var p when p.StartsWith("U") => "В",
+            var p when p.StartsWith("I") => "А",
+            var p when p.StartsWith("P") || p.StartsWith("Q") || p.StartsWith("Aq") => "Вт",
+            var p when p.Contains("Energy") => "кВт⋅ч",
+            "Freq" => "Гц",
+            var p when p.StartsWith("FundPfCf") => "",
+            var p when p.StartsWith("HU") || p.StartsWith("HI") => "%",
+            var p when p.StartsWith("Angle") => "°",
+            _ => ""
+        };
     }
 
     public async Task UpdateScanInterval(int newIntervalMs)
     {
         try
         {
-            // Получаем новое среднее значение scan_interval из базы данных
-            var averageScanInterval = await _context.DeviceSettings
-                .Where(ds => ds.ScanInterval > 0)
-                .AverageAsync(ds => (double)ds.ScanInterval);
-
-            // Если нет данных, используем переданное значение
-            _currentScanInterval = (int)Math.Round(averageScanInterval > 0 ? averageScanInterval : newIntervalMs);
+            // Обновляем scan_interval у всех устройств в базе данных
+            var deviceSettings = await _context.DeviceSettings.ToListAsync();
             
-            // Перезапускаем опрос с новым интервалом
-            if (_pollingTimer != null)
+            foreach (var setting in deviceSettings)
             {
-                await StopDataPolling();
-                await StartDataPolling();
+                setting.ScanInterval = newIntervalMs;
             }
+            await _context.SaveChangesAsync();
             
-            _logger.LogInformation($"Scan interval updated to: {_currentScanInterval}ms (average from database)");
+            _logger.LogInformation($"Scan interval updated to: {newIntervalMs}ms in database");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error updating scan interval");
-            // В случае ошибки используем переданное значение
-            _currentScanInterval = newIntervalMs;
-            if (_pollingTimer != null)
-            {
-                await StopDataPolling();
-                await StartDataPolling();
-            }
+            _logger.LogError(ex, "Error updating scan interval in database");
         }
-    }
-
-    public void Dispose()
-    {
-        _pollingTimer?.Dispose();
     }
 } 

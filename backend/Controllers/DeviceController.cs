@@ -59,7 +59,7 @@ namespace backend.Controllers
                 _ => new List<DeviceDashboardParam>()
             };
 
-            return parameters.Take(7).ToList();
+            return parameters.Take(6).ToList(); // Максимум 6 параметров
         }
 
         private List<DeviceDashboardParam> GetElectricalDeviceParameters(long deviceId)
@@ -73,12 +73,46 @@ namespace backend.Controllers
                 return new List<DeviceDashboardParam>();
 
             var parameters = new List<DeviceDashboardParam>();
-            var properties = typeof(ElectricityDeviceDatum).GetProperties()
-                .Where(p => p.PropertyType == typeof(decimal) || p.PropertyType == typeof(decimal?))
-                .Where(p => p.Name != "Id" && p.Name != "DeviceId");
-
-            foreach (var prop in properties)
+            
+            // Определяем приоритетные параметры для отображения на карточках
+            var priorityParams = new[] { "IL1", "IL2", "IL3", "PSum", "QSum", "AllEnergy" };
+            
+            // Сначала добавляем приоритетные параметры
+            foreach (var priorityParam in priorityParams)
             {
+                var prop = typeof(ElectricityDeviceDatum).GetProperty(priorityParam);
+                if (prop != null)
+                {
+                    var value = prop.GetValue(latestData);
+                    if (value != null && value is decimal decimalValue)
+                    {
+                        parameters.Add(new DeviceDashboardParam
+                        {
+                            Name = NameHelper.GetParameterShortName(priorityParam),
+                            Value = decimalValue.ToString("F3")
+                        });
+                        Console.WriteLine($"✅ Added priority parameter: {priorityParam} = {decimalValue}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"❌ Priority parameter {priorityParam} has no value or is null");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"❌ Priority parameter {priorityParam} property not found");
+                }
+            }
+            
+            // Затем добавляем остальные параметры до достижения максимума в 6 штук
+            var remainingProperties = typeof(ElectricityDeviceDatum).GetProperties()
+                .Where(p => p.PropertyType == typeof(decimal) || p.PropertyType == typeof(decimal?))
+                .Where(p => p.Name != "Id" && p.Name != "DeviceId" && !priorityParams.Contains(p.Name));
+
+            foreach (var prop in remainingProperties)
+            {
+                if (parameters.Count >= 6) break; // Максимум 6 параметров
+                
                 var value = prop.GetValue(latestData);
                 if (value != null && value is decimal decimalValue)
                 {
@@ -87,9 +121,11 @@ namespace backend.Controllers
                         Name = NameHelper.GetParameterShortName(prop.Name),
                         Value = decimalValue.ToString("F3")
                     });
+                    Console.WriteLine($"➕ Added additional parameter: {prop.Name} = {decimalValue}");
                 }
             }
 
+            Console.WriteLine($"🎯 Device {deviceId}: Total parameters returned: {parameters.Count}");
             return parameters;
         }
 

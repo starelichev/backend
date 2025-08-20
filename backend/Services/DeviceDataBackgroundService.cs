@@ -28,11 +28,11 @@ public class DeviceDataBackgroundService : BackgroundService
                 using var scope = _serviceProvider.CreateScope();
                 var deviceDataService = scope.ServiceProvider.GetRequiredService<IDeviceDataService>();
                 
-                // Запускаем опрос данных
-                await deviceDataService.StartDataPolling();
+                // Просто отправляем данные устройств каждые 10 секунд
+                await deviceDataService.SendAverageDeviceData();
                 
-                // Ждем до следующего цикла
-                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                // Ждем ровно 10 секунд до следующего цикла
+                await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
             }
             catch (Exception ex)
             {
