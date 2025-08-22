@@ -23,32 +23,29 @@ namespace backend.Controllers
             try
             {
                 var now = DateTime.Now;
-                var today8am = new DateTime(now.Year, now.Month, now.Day, 8, 0, 0);
+                var todayStart = new DateTime(now.Year, now.Month, now.Day, 0, 0, 0);
+                var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0);
+                var yesterdayStart = todayStart.AddDays(-1);
+                var yesterdayEnd = todayStart.AddSeconds(-1);
                 
-                // Если сейчас до 8 утра, то "сегодня" начинается с 8 утра вчера
-                var dayStart = now.Hour < 8 ? today8am.AddDays(-1) : today8am;
-                var dayEnd = now;
-
+                Console.WriteLine($"=== Dashboard Metrics Debug ===");
+                Console.WriteLine($"Now: {now}");
+                Console.WriteLine($"Today Start: {todayStart}");
+                Console.WriteLine($"Month Start: {monthStart}");
+                Console.WriteLine($"Yesterday Start: {yesterdayStart}");
+                Console.WriteLine($"Yesterday End: {yesterdayEnd}");
+                Console.WriteLine($"===============================");
+                
                 var response = new DashboardMetricsResponse
                 {
-                    // Расход за месяц (с начала текущего месяца)
-                    MonthlyConsumption = GetConsumptionData(
-                        new DateTime(now.Year, now.Month, 1),
-                        now,
-                        "month"
-                    ),
+                    // Расход за текущий месяц (с начала месяца)
+                    MonthlyConsumption = GetSitesConsumptionData(monthStart, now),
                     
-                    // Расход за день (с 8 утра)
-                    DailyConsumption = GetConsumptionData(
-                        dayStart,
-                        dayEnd,
-                        "day"
-                    ),
+                    // Расход за текущие сутки (с 00:00 сегодня)
+                    DailyConsumption = GetSitesConsumptionData(todayStart, now),
                     
-                    // Прогнозы
-                    DayForecast = GetForecastData("day", now),
-                    WeekForecast = GetForecastData("week", now),
-                    MonthForecast = GetForecastData("month", now)
+                    // Расход за предыдущие сутки
+                    PreviousDayConsumption = GetSitesConsumptionData(yesterdayStart, yesterdayEnd)
                 };
 
                 return Ok(response);
@@ -59,97 +56,175 @@ namespace backend.Controllers
             }
         }
 
-        private ConsumptionDataResponse GetConsumptionData(DateTime startDate, DateTime endDate, string period)
+        private List<SiteConsumptionData> GetSitesConsumptionData(DateTime startDate, DateTime endDate)
         {
-            // Получаем данные электрических счетчиков
-            var electricityData = _context.ElectricityDeviceData
-                .Where(ed => ed.TimeReading >= startDate && ed.TimeReading <= endDate)
-                .ToList();
-
-            // Получаем данные газовых счетчиков
-            var gasData = _context.GasDeviceData
-                .Where(gd => gd.ReadingTime >= startDate && gd.ReadingTime <= endDate)
-                .ToList();
-
-            // Вычисляем потребление электричества (сумма AllEnergy)
-            var electricityConsumption = electricityData.Any() 
-                ? electricityData.Sum(ed => ed.AllEnergy)
-                : 0;
-
-            // Вычисляем потребление газа (сумма WorkingVolume)
-            var gasConsumption = gasData.Any() 
-                ? gasData.Sum(gd => gd.WorkingVolume)
-                : 0;
-
-            return new ConsumptionDataResponse
+            var sites = new List<SiteConsumptionData>
             {
-                ElectricityConsumption = Math.Round(electricityConsumption, 2),
-                GasConsumption = Math.Round(gasConsumption, 2),
-                Period = period,
-                DateFrom = startDate,
-                DateTo = endDate
+                new SiteConsumptionData { SiteName = "КВТ-Юг" },
+                new SiteConsumptionData { SiteName = "ЛЦ" },
+                new SiteConsumptionData { SiteName = "КВТ-Восток" },
+                new SiteConsumptionData { SiteName = "КВТ-Север" },
+                new SiteConsumptionData { SiteName = "РСК" }
             };
+
+            // Получаем данные по электричеству для каждой площадки
+            foreach (var site in sites)
+            {
+                site.ElectricityConsumption = GetElectricityConsumptionForSite(site.SiteName, startDate, endDate);
+            }
+
+            // Получаем данные по газу для площадок (кроме ЛЦ и РСК)
+            var gasSites = sites.Where(s => s.SiteName != "ЛЦ" && s.SiteName != "РСК").ToList();
+            foreach (var site in gasSites)
+            {
+                site.GasConsumption = GetGasConsumptionForSite(site.SiteName, startDate, endDate);
+            }
+
+            return sites;
         }
 
-        private ForecastDataResponse GetForecastData(string period, DateTime currentDate)
+        private decimal GetElectricityConsumptionForSite(string siteName, DateTime startDate, DateTime endDate)
         {
-            // Определяем количество дней для расчета среднего
-            int daysToAverage = period switch
+            try
             {
-                "day" => 7,    // Среднее за последние 7 дней
-                "week" => 30,  // Среднее за последние 30 дней
-                "month" => 90, // Среднее за последние 90 дней
-                _ => 7
-            };
+                Console.WriteLine($"=== GetElectricityConsumptionForSite: {siteName} ===");
+                Console.WriteLine($"Period: {startDate} - {endDate}");
+                
+                // Определяем счетчики для каждой площадки
+                var meterNames = siteName switch
+                {
+                    "КВТ-Юг" => new[] { "Трансформатор 1", "Трансформатор 2" },
+                    "ЛЦ" => new[] { "Логистический центр" },
+                    "КВТ-Восток" => new[] { "КТП" },
+                    "КВТ-Север" => new[] { "КТП 808" },
+                    "РСК" => new[] { "РСК" },
+                    _ => new string[0]
+                };
 
-            var startDate = currentDate.AddDays(-daysToAverage);
-            var endDate = currentDate;
+                Console.WriteLine($"Meter names for {siteName}: {string.Join(", ", meterNames)}");
 
-            // Получаем исторические данные
-            var electricityData = _context.ElectricityDeviceData
-                .Where(ed => ed.TimeReading >= startDate && ed.TimeReading <= endDate)
-                .ToList();
+                if (!meterNames.Any()) return 0;
 
-            var gasData = _context.GasDeviceData
-                .Where(gd => gd.ReadingTime >= startDate && gd.ReadingTime <= endDate)
-                .ToList();
+                // Получаем начальные показания (самые ранние записи в периоде)
+                var startData = _context.ElectricityDeviceData
+                    .Include(ed => ed.Device)
+                    .Where(ed => ed.TimeReading >= startDate && ed.TimeReading <= endDate)
+                    .Where(ed => meterNames.Contains(ed.Device.Name))
+                    .OrderBy(ed => ed.TimeReading)
+                    .ToList();
 
-            // Группируем данные по дням
-            var electricityByDay = electricityData
-                .GroupBy(ed => ed.TimeReading.Date)
-                .Select(g => g.Sum(ed => ed.AllEnergy))
-                .ToList();
+                // Получаем конечные показания (самые поздние записи в периоде)
+                var endData = _context.ElectricityDeviceData
+                    .Include(ed => ed.Device)
+                    .Where(ed => ed.TimeReading >= startDate && ed.TimeReading <= endDate)
+                    .Where(ed => meterNames.Contains(ed.Device.Name))
+                    .OrderByDescending(ed => ed.TimeReading)
+                    .ToList();
 
-            var gasByDay = gasData
-                .GroupBy(gd => gd.ReadingTime.Date)
-                .Select(g => g.Sum(gd => gd.WorkingVolume))
-                .ToList();
+                Console.WriteLine($"Start data count: {startData.Count}");
+                Console.WriteLine($"End data count: {endData.Count}");
 
-            // Вычисляем среднее потребление за день
-            var avgElectricityPerDay = electricityByDay.Any() 
-                ? electricityByDay.Average() 
-                : 0;
+                decimal totalConsumption = 0;
 
-            var avgGasPerDay = gasByDay.Any() 
-                ? gasByDay.Average() 
-                : 0;
+                // Для каждой площадки с несколькими счетчиками суммируем потребление
+                foreach (var meterName in meterNames)
+                {
+                    var meterStartData = startData.FirstOrDefault(ed => ed.Device.Name == meterName);
+                    var meterEndData = endData.FirstOrDefault(ed => ed.Device.Name == meterName);
 
-            // Вычисляем прогноз в зависимости от периода
-            var multiplier = period switch
+                    Console.WriteLine($"Meter: {meterName}");
+                    Console.WriteLine($"  Start data: {(meterStartData != null ? $"Time: {meterStartData.TimeReading}, AllEnergy: {meterStartData.AllEnergy}" : "NULL")}");
+                    Console.WriteLine($"  End data: {(meterEndData != null ? $"Time: {meterEndData.TimeReading}, AllEnergy: {meterEndData.AllEnergy}" : "NULL")}");
+
+                    if (meterStartData != null && meterEndData != null)
+                    {
+                        var consumption = meterEndData.AllEnergy - meterStartData.AllEnergy;
+                        Console.WriteLine($"  Consumption: {consumption}");
+                        totalConsumption += Math.Max(0, consumption);
+                    }
+                }
+
+                Console.WriteLine($"Total consumption for {siteName}: {totalConsumption}");
+                Console.WriteLine($"===============================================");
+
+                return Math.Round(totalConsumption, 2);
+            }
+            catch (Exception ex)
             {
-                "day" => 1,
-                "week" => 7,
-                "month" => 30,
-                _ => 1
-            };
+                Console.WriteLine($"Ошибка при расчете потребления электричества для площадки {siteName}: {ex.Message}");
+                return 0;
+            }
+        }
 
-            return new ForecastDataResponse
+        private decimal GetGasConsumptionForSite(string siteName, DateTime startDate, DateTime endDate)
+        {
+            try
             {
-                ElectricityForecast = Math.Round(avgElectricityPerDay * multiplier, 2),
-                GasForecast = Math.Round(avgGasPerDay * multiplier, 2),
-                Period = period,
-                ForecastDate = currentDate
-            };
+                Console.WriteLine($"=== GetGasConsumptionForSite: {siteName} ===");
+                Console.WriteLine($"Period: {startDate} - {endDate}");
+                
+                // Определяем счетчики газа для каждой площадки
+                var meterNames = siteName switch
+                {
+                    "КВТ-Юг" => new[] { "Газовый счетчик КВТ-Юг" }, // Нужно уточнить точное название счетчика
+                    "КВТ-Восток" => new[] { "Газовый счетчик КВТ-Восток" }, // Нужно уточнить точное название счетчика
+                    "КВТ-Север" => new[] { "Газовый счетчик КВТ-Север" }, // Нужно уточнить точное название счетчика
+                    _ => new string[0]
+                };
+
+                Console.WriteLine($"Gas meter names for {siteName}: {string.Join(", ", meterNames)}");
+
+                if (!meterNames.Any()) return 0;
+
+                // Получаем начальные показания (самые ранние записи в периоде)
+                var startData = _context.GasDeviceData
+                    .Include(gd => gd.Device)
+                    .Where(gd => gd.ReadingTime >= startDate && gd.ReadingTime <= endDate)
+                    .Where(gd => meterNames.Contains(gd.Device.Name))
+                    .OrderBy(gd => gd.ReadingTime)
+                    .ToList();
+
+                // Получаем конечные показания (самые поздние записи в периоде)
+                var endData = _context.GasDeviceData
+                    .Include(gd => gd.Device)
+                    .Where(gd => gd.ReadingTime >= startDate && gd.ReadingTime <= endDate)
+                    .Where(gd => meterNames.Contains(gd.Device.Name))
+                    .OrderByDescending(gd => gd.ReadingTime)
+                    .ToList();
+
+                Console.WriteLine($"Gas start data count: {startData.Count}");
+                Console.WriteLine($"Gas end data count: {endData.Count}");
+
+                decimal totalConsumption = 0;
+
+                // Для каждой площадки с несколькими счетчиками суммируем потребление
+                foreach (var meterName in meterNames)
+                {
+                    var meterStartData = startData.FirstOrDefault(gd => gd.Device.Name == meterName);
+                    var meterEndData = endData.FirstOrDefault(gd => gd.Device.Name == meterName);
+
+                    Console.WriteLine($"Gas meter: {meterName}");
+                    Console.WriteLine($"  Start data: {(meterStartData != null ? $"Time: {meterStartData.ReadingTime}, WorkingVolume: {meterStartData.WorkingVolume}" : "NULL")}");
+                    Console.WriteLine($"  End data: {(meterEndData != null ? $"Time: {meterEndData.ReadingTime}, WorkingVolume: {meterEndData.WorkingVolume}" : "NULL")}");
+
+                    if (meterStartData != null && meterEndData != null)
+                    {
+                        var consumption = meterEndData.WorkingVolume - meterStartData.WorkingVolume;
+                        Console.WriteLine($"  Gas consumption: {consumption}");
+                        totalConsumption += Math.Max(0, consumption);
+                    }
+                }
+
+                Console.WriteLine($"Total gas consumption for {siteName}: {totalConsumption}");
+                Console.WriteLine($"===============================================");
+
+                return Math.Round(totalConsumption, 2);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка при расчете потребления газа для площадки {siteName}: {ex.Message}");
+                return 0;
+            }
         }
     }
 } 

@@ -9,6 +9,18 @@ public class CreateReportRequest
     public long? CreatedByUserId { get; set; }
 }
 
+public class CreateAdvancedReportRequest
+{
+    public string Type { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public long? CreatedByUserId { get; set; }
+    public List<string> Parameters { get; set; } = new();
+    public long[] MeterIds { get; set; } = new long[0];
+    public long[] ObjectIds { get; set; } = new long[0];
+    public DateTime DateFrom { get; set; }
+    public DateTime DateTo { get; set; }
+}
+
 public class CreateVisualizationReportRequest
 {
     public string Type { get; set; } = string.Empty;
@@ -21,6 +33,8 @@ public class CreateVisualizationReportRequest
 public class VisualizationDataRow
 {
     public DateTime Timestamp { get; set; }
+    public long DeviceId { get; set; }
+    public string DeviceName { get; set; } = string.Empty;
     public Dictionary<string, double> Values { get; set; } = new();
 }
 

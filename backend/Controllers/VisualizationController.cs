@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using backend.Models;
 using backend.Contracts;
 using System.Linq;
+using backend.Helpers;
 
 namespace backend.Controllers
 {
@@ -104,6 +105,19 @@ namespace backend.Controllers
                 "gas" => GetGasParameters(),
                 "electrical" => GetElectricParameters(),
                 _ => GetElectricParameters()
+            };
+
+            return Ok(parameters);
+        }
+
+        [HttpGet("parameters-readable/{meterType}")]
+        public ActionResult<List<VisualizationParameterReadable>> GetParametersReadable(string meterType)
+        {
+            var parameters = meterType.ToLower() switch
+            {
+                "gas" => GetGasParametersReadable(),
+                "electrical" => GetElectricParametersReadable(),
+                _ => GetElectricParametersReadable()
             };
 
             return Ok(parameters);
@@ -221,7 +235,30 @@ namespace backend.Controllers
                                 ["Aq3"] = firstItem.Aq3 ?? 0,
                                 ["FundPfCf1"] = firstItem.FundPfCf1 ?? 0,
                                 ["FundPfCf2"] = firstItem.FundPfCf2 ?? 0,
-                                ["FundPfCf3"] = firstItem.FundPfCf3 ?? 0
+                                ["FundPfCf3"] = firstItem.FundPfCf3 ?? 0,
+                                ["RotationField"] = firstItem.RotationField ?? 0,
+                                ["RqcL1"] = firstItem.RqcL1 ?? 0,
+                                ["RqcL2"] = firstItem.RqcL2 ?? 0,
+                                ["RqcL3"] = firstItem.RqcL3 ?? 0,
+                                ["RqdL1"] = firstItem.RqdL1 ?? 0,
+                                ["RqdL2"] = firstItem.RqdL2 ?? 0,
+                                ["RqdL3"] = firstItem.RqdL3 ?? 0,
+                                ["ReactQIL1"] = firstItem.ReactQIL1 ?? 0,
+                                ["ReactQIL2"] = firstItem.ReactQIL2 ?? 0,
+                                ["ReactQIL3"] = firstItem.ReactQIL3 ?? 0,
+                                ["ReactQCL1"] = firstItem.ReactQCL1 ?? 0,
+                                ["ReactQCL2"] = firstItem.ReactQCL2 ?? 0,
+                                ["ReactQCL3"] = firstItem.ReactQCL3 ?? 0,
+                                ["HUL1"] = firstItem.HUL1 ?? 0,
+                                ["HUL2"] = firstItem.HUL2 ?? 0,
+                                ["HUL3"] = firstItem.HUL3 ?? 0,
+                                ["HIL1"] = firstItem.HIL1 ?? 0,
+                                ["HIL2"] = firstItem.HIL2 ?? 0,
+                                ["HIL3"] = firstItem.HIL3 ?? 0,
+                                ["Angle1"] = firstItem.Angle1 ?? 0,
+                                ["Angle2"] = firstItem.Angle2 ?? 0,
+                                ["Angle3"] = firstItem.Angle3 ?? 0,
+                                ["AllEnergyK"] = firstItem.AllEnergyK ?? 0
                             }
                         });
                     }
@@ -340,12 +377,51 @@ namespace backend.Controllers
         {
             return new List<VisualizationParameter>
             {
-                new VisualizationParameter { Name = "Напряжение", Key = "voltage", Parameters = new[] { "UL1N", "UL2N", "UL3N", "UL1L2", "UL2L3", "UL3L1" } },
-                new VisualizationParameter { Name = "Ток", Key = "current", Parameters = new[] { "IL1", "IL2", "IL3" } },
-                new VisualizationParameter { Name = "Мощность", Key = "power", Parameters = new[] { "PL1", "PL2", "PL3", "PSum", "QL1", "QL2", "QL3", "QSum", "Aq1", "Aq2", "Aq3" } },
-                new VisualizationParameter { Name = "Энергия", Key = "energy", Parameters = new[] { "AllEnergy", "ReactiveEnergySum" } },
-                new VisualizationParameter { Name = "Коэффициент мощности", Key = "powerFactor", Parameters = new[] { "FundPfCf1", "FundPfCf2", "FundPfCf3" } },
-                new VisualizationParameter { Name = "Частота", Key = "frequency", Parameters = new[] { "Freq" } }
+                new VisualizationParameter { 
+                    Name = "Напряжение", 
+                    Key = "voltage", 
+                    Parameters = new[] { "UL1N", "UL2N", "UL3N", "UL1L2", "UL2L3", "UL3L1" } 
+                },
+                new VisualizationParameter { 
+                    Name = "Ток", 
+                    Key = "current", 
+                    Parameters = new[] { "IL1", "IL2", "IL3" } 
+                },
+                new VisualizationParameter { 
+                    Name = "Мощность", 
+                    Key = "power", 
+                    Parameters = new[] { "PL1", "PL2", "PL3", "PSum", "QL1", "QL2", "QL3", "QSum", "Aq1", "Aq2", "Aq3" } 
+                },
+                new VisualizationParameter { 
+                    Name = "Энергия", 
+                    Key = "energy", 
+                    Parameters = new[] { "AllEnergy", "ReactiveEnergySum", "RqcL1", "RqcL2", "RqcL3", "RqdL1", "RqdL2", "RqdL3", "ReactQIL1", "ReactQIL2", "ReactQIL3", "ReactQCL1", "ReactQCL2", "ReactQCL3", "AllEnergyK" } 
+                },
+                new VisualizationParameter { 
+                    Name = "Коэффициент мощности", 
+                    Key = "powerFactor", 
+                    Parameters = new[] { "FundPfCf1", "FundPfCf2", "FundPfCf3" } 
+                },
+                new VisualizationParameter { 
+                    Name = "Частота", 
+                    Key = "frequency", 
+                    Parameters = new[] { "Freq" } 
+                },
+                new VisualizationParameter { 
+                    Name = "Гармоники", 
+                    Key = "harmonics", 
+                    Parameters = new[] { "HUL1", "HUL2", "HUL3", "HIL1", "HIL2", "HIL3" } 
+                },
+                new VisualizationParameter { 
+                    Name = "Углы", 
+                    Key = "angles", 
+                    Parameters = new[] { "Angle1", "Angle2", "Angle3" } 
+                },
+                new VisualizationParameter { 
+                    Name = "Вращение", 
+                    Key = "rotation", 
+                    Parameters = new[] { "RotationField" } 
+                }
             };
         }
 
@@ -359,6 +435,185 @@ namespace backend.Controllers
                 new VisualizationParameter { Name = "Батарея", Key = "battery", Parameters = new[] { "BatteryLive" } },
                 new VisualizationParameter { Name = "Давление", Key = "pressure", Parameters = new[] { "PressureGas" } },
                 new VisualizationParameter { Name = "Мощность", Key = "power", Parameters = new[] { "Power" } }
+            };
+        }
+
+        private List<VisualizationParameterReadable> GetElectricParametersReadable()
+        {
+            return new List<VisualizationParameterReadable>
+            {
+                new VisualizationParameterReadable { 
+                    Name = "Напряжение", 
+                    Key = "voltage", 
+                    Parameters = new[] { "UL1N", "UL2N", "UL3N", "UL1L2", "UL2L3", "UL3L1" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = NameHelper.GetParameterFullName(p), 
+                            ShortName = NameHelper.GetParameterShortName(p) 
+                        }).ToList()
+                },
+                new VisualizationParameterReadable { 
+                    Name = "Ток", 
+                    Key = "current", 
+                    Parameters = new[] { "IL1", "IL2", "IL3" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = NameHelper.GetParameterFullName(p), 
+                            ShortName = NameHelper.GetParameterShortName(p) 
+                        }).ToList()
+                },
+                new VisualizationParameterReadable { 
+                    Name = "Мощность", 
+                    Key = "power", 
+                    Parameters = new[] { "PL1", "PL2", "PL3", "PSum", "QL1", "QL2", "QL3", "QSum", "Aq1", "Aq2", "Aq3" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = NameHelper.GetParameterFullName(p), 
+                            ShortName = NameHelper.GetParameterShortName(p) 
+                        }).ToList()
+                },
+                new VisualizationParameterReadable { 
+                    Name = "Энергия", 
+                    Key = "energy", 
+                    Parameters = new[] { "AllEnergy", "ReactiveEnergySum", "RqcL1", "RqcL2", "RqcL3", "RqdL1", "RqdL2", "RqdL3", "ReactQIL1", "ReactQIL2", "ReactQIL3", "ReactQCL1", "ReactQCL2", "ReactQCL3", "AllEnergyK" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = NameHelper.GetParameterFullName(p), 
+                            ShortName = NameHelper.GetParameterShortName(p) 
+                        }).ToList()
+                },
+                new VisualizationParameterReadable { 
+                    Name = "Коэффициент мощности", 
+                    Key = "powerFactor", 
+                    Parameters = new[] { "FundPfCf1", "FundPfCf2", "FundPfCf3" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = NameHelper.GetParameterFullName(p), 
+                            ShortName = NameHelper.GetParameterShortName(p) 
+                        }).ToList()
+                },
+                new VisualizationParameterReadable { 
+                    Name = "Частота", 
+                    Key = "frequency", 
+                    Parameters = new[] { "Freq" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = NameHelper.GetParameterFullName(p), 
+                            ShortName = NameHelper.GetParameterShortName(p) 
+                        }).ToList()
+                },
+                new VisualizationParameterReadable { 
+                    Name = "Гармоники", 
+                    Key = "harmonics", 
+                    Parameters = new[] { "HUL1", "HUL2", "HUL3", "HIL1", "HIL2", "HIL3" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = NameHelper.GetParameterFullName(p), 
+                            ShortName = NameHelper.GetParameterShortName(p) 
+                        }).ToList()
+                },
+                new VisualizationParameterReadable { 
+                    Name = "Углы", 
+                    Key = "angles", 
+                    Parameters = new[] { "Angle1", "Angle2", "Angle3" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = NameHelper.GetParameterFullName(p), 
+                            ShortName = NameHelper.GetParameterShortName(p) 
+                        }).ToList()
+                },
+                new VisualizationParameterReadable { 
+                    Name = "Вращение", 
+                    Key = "rotation", 
+                    Parameters = new[] { "RotationField" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = NameHelper.GetParameterFullName(p), 
+                            ShortName = NameHelper.GetParameterShortName(p) 
+                        }).ToList()
+                }
+            };
+        }
+
+        private List<VisualizationParameterReadable> GetGasParametersReadable()
+        {
+            return new List<VisualizationParameterReadable>
+            {
+                new VisualizationParameterReadable { 
+                    Name = "Температура газа", 
+                    Key = "temperature", 
+                    Parameters = new[] { "TemperatureGas" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = "Температура газа", 
+                            ShortName = "Темп. газа" 
+                        }).ToList()
+                },
+                new VisualizationParameterReadable { 
+                    Name = "Рабочий объем газа", 
+                    Key = "volume", 
+                    Parameters = new[] { "WorkingVolume", "StandardVolume" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = p == "WorkingVolume" ? "Рабочий объем газа" : "Стандартный объем газа", 
+                            ShortName = p == "WorkingVolume" ? "Раб. объем" : "Станд. объем" 
+                        }).ToList()
+                },
+                new VisualizationParameterReadable { 
+                    Name = "Мгновенный расход газа", 
+                    Key = "flow", 
+                    Parameters = new[] { "InstantaneousFlow" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = "Мгновенный расход газа", 
+                            ShortName = "Расход газа" 
+                        }).ToList()
+                },
+                new VisualizationParameterReadable { 
+                    Name = "Батарея", 
+                    Key = "battery", 
+                    Parameters = new[] { "BatteryLive" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = "Состояние батареи", 
+                            ShortName = "Батарея" 
+                        }).ToList()
+                },
+                new VisualizationParameterReadable { 
+                    Name = "Давление", 
+                    Key = "pressure", 
+                    Parameters = new[] { "PressureGas" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = "Давление газа", 
+                            ShortName = "Давление" 
+                        }).ToList()
+                },
+                new VisualizationParameterReadable { 
+                    Name = "Мощность", 
+                    Key = "power", 
+                    Parameters = new[] { "Power" }
+                        .Select(p => new VisualizationParameterItem 
+                        { 
+                            Code = p, 
+                            FullName = "Мощность газа", 
+                            ShortName = "Мощность" 
+                        }).ToList()
+                }
             };
         }
     }

@@ -2,7 +2,10 @@ using Microsoft.AspNetCore.Mvc;
 using backend.Models;
 using backend.Contracts;
 using backend.Helpers;
+using backend.Services;
+using backend.Hubs;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
 
 namespace backend.Controllers
 {
@@ -11,10 +14,14 @@ namespace backend.Controllers
     public class DeviceController : ControllerBase
     {
         private readonly BmsContext _context;
+        private readonly IRabbitMQService _rabbitMQService;
+        private readonly IHubContext<NotificationHub> _hubContext;
         
-        public DeviceController(BmsContext context)
+        public DeviceController(BmsContext context, IRabbitMQService rabbitMQService, IHubContext<NotificationHub> hubContext)
         {
             _context = context;
+            _rabbitMQService = rabbitMQService;
+            _hubContext = hubContext;
         }
 
         [HttpGet("dashboard")] // /api/Device/dashboard
@@ -169,50 +176,190 @@ namespace backend.Controllers
             return parameters;
         }
 
-        [HttpGet("device/{id}/details")] // /api/Device/device/{id}/details
-        public ActionResult<DeviceDetailsResponse> GetDeviceDetails(long id)
+        [HttpGet("details/{id}")]
+        public ActionResult<DeviceDetails> GetDeviceDetails(long id)
         {
-            var device = _context.Devices
-                .Include(x => x.Parent)
-                .Include(x => x.DeviceType)
-                .FirstOrDefault(d => d.Id == id);
-            
-            if (device == null)
-                return NotFound();
-
-            // Получаем параметры в зависимости от типа устройства
-            var parameters = device.DeviceType?.Type.ToLower() switch
+            try
             {
-                "electrical" => GetElectricalDeviceDetailParameters(id),
-                "gas" => GetGasDeviceDetailParameters(id),
-                _ => new List<DeviceDetailParam>()
-            };
+                var device = _context.Devices
+                    .Include(d => d.DeviceSettings)
+                    .Include(d => d.Channel)
+                    .FirstOrDefault(d => d.Id == id);
 
-            // Определяем время последнего чтения
-            DateTime? lastReading = device.DeviceType?.Type.ToLower() switch
-            {
-                "electrical" => _context.ElectricityDeviceData
-                    .Where(ed => ed.DeviceId == id)
-                    .OrderByDescending(ed => ed.TimeReading)
-                    .Select(ed => ed.TimeReading)
-                    .FirstOrDefault(),
-                "gas" => _context.GasDeviceData
-                    .Where(gd => gd.DeviceId == id)
-                    .OrderByDescending(gd => gd.ReadingTime)
-                    .Select(gd => gd.ReadingTime)
-                    .FirstOrDefault(),
-                _ => null
-            };
+                if (device == null)
+                    return NotFound(new { error = "Устройство не найдено" });
 
-            return Ok(new DeviceDetailsResponse
+                var deviceSetting = device.DeviceSettings.FirstOrDefault();
+                
+                var response = new DeviceDetails
+                {
+                    Id = device.Id,
+                    Name = device.Name,
+                    Comment = device.Comment,
+                    TrustedBefore = device.TrustedBefore,
+                    IpAddress = device.Channel?.Ip,
+                    NetworkPort = device.Channel?.Port,
+                    KoeffTrans = deviceSetting?.KoeffTrans ?? 1.0,
+                    ScanInterval = deviceSetting?.ScanInterval ?? 10000,
+                    ChannelId = device.ChannelId,
+                    ChannelName = device.Channel?.Name,
+                    Active = device.Active,
+                    SerialNo = device.SerialNo,
+                    InstallationDate = device.InstallationDate?.ToDateTime(TimeOnly.MinValue),
+                    LastReceive = device.LastReceive
+                };
+
+                return Ok(response);
+            }
+            catch (Exception ex)
             {
-                DeviceId = device.Id,
-                DeviceName = device.Name,
-                ObjectName = device.Parent?.Name,
-                IsActive = device.Active,
-                LastReading = lastReading,
-                Parameters = parameters
-            });
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        [HttpPut("edit")]
+        public async Task<ActionResult<DeviceEditResponse>> EditDevice([FromBody] DeviceEditRequest request)
+        {
+            try
+            {
+                var device = _context.Devices
+                    .Include(d => d.DeviceSettings)
+                    .Include(d => d.Channel)
+                    .FirstOrDefault(d => d.Id == request.Id);
+
+                if (device == null)
+                    return NotFound(new { error = "Устройство не найдено" });
+
+                // Обновляем основные поля устройства
+                if (!string.IsNullOrEmpty(request.Name))
+                    device.Name = request.Name;
+                
+                if (request.Comment != null)
+                    device.Comment = request.Comment;
+                
+                if (request.TrustedBefore.HasValue)
+                    device.TrustedBefore = request.TrustedBefore.Value;
+
+                // Обновляем IP-адрес и порт в канале
+                if (device.Channel != null)
+                {
+                    if (!string.IsNullOrEmpty(request.IpAddress))
+                        device.Channel.Ip = request.IpAddress;
+                    
+                    if (request.NetworkPort.HasValue)
+                        device.Channel.Port = request.NetworkPort.Value;
+                }
+
+                // Обновляем коэффициент трансформации и время опроса
+                var deviceSetting = device.DeviceSettings.FirstOrDefault();
+                bool scanIntervalChanged = false;
+                long? oldScanInterval = deviceSetting?.ScanInterval;
+                
+                if (deviceSetting != null)
+                {
+                    if (request.KoeffTrans.HasValue)
+                        deviceSetting.KoeffTrans = request.KoeffTrans.Value;
+                    
+                    if (request.ScanInterval.HasValue)
+                    {
+                        scanIntervalChanged = deviceSetting.ScanInterval != request.ScanInterval.Value;
+                        deviceSetting.ScanInterval = request.ScanInterval.Value;
+                    }
+                }
+                else if (request.KoeffTrans.HasValue || request.ScanInterval.HasValue)
+                {
+                    // Создаем новую настройку если её нет
+                    scanIntervalChanged = request.ScanInterval.HasValue;
+                    deviceSetting = new DeviceSetting
+                    {
+                        DeviceId = device.Id,
+                        KoeffTrans = request.KoeffTrans ?? 1.0,
+                        ScanInterval = request.ScanInterval ?? 10000, // По умолчанию 10 секунд
+                        TypeLink = 2, // TCP по умолчанию
+                        Parity = 'N',
+                        ProtServiceCode = 0,
+                        DayDataLive = 365,
+                        SuccessReceive = 0,
+                        BadReceive = 0
+                    };
+                    _context.DeviceSettings.Add(deviceSetting);
+                }
+
+                _context.SaveChanges();
+
+                // Отправляем сообщение в RabbitMQ и логируем действие при изменении времени опроса
+                if (scanIntervalChanged && request.ScanInterval.HasValue)
+                {
+                    try
+                    {
+                        // Логируем действие пользователя
+                        var userAction = new UserAction
+                        {
+                            UserId = request.UserId ?? 0,
+                            ActionId = 6, // ID действия "Изменение времени опроса устройства"
+                            Date = DateTime.Now,
+                            Description = $"Время опроса устройства '{device.Name}' изменено с {oldScanInterval ?? 10000} мс на {request.ScanInterval.Value} мс"
+                        };
+                        _context.UserActions.Add(userAction);
+                        await _context.SaveChangesAsync();
+
+                        // Отправляем уведомление через SignalR
+                        await _hubContext.Clients.Group("notifications").SendAsync("UserActionCreated", new
+                        {
+                            id = userAction.Id,
+                            userId = userAction.UserId,
+                            actionId = userAction.ActionId,
+                            date = userAction.Date,
+                            description = userAction.Description
+                        });
+
+                        // Отправляем сообщение в RabbitMQ
+                        _rabbitMQService.SendMessage("device_scan_interval_update", new
+                        {
+                            device_id = device.Id,
+                            device_name = device.Name,
+                            old_scan_interval_ms = oldScanInterval,
+                            new_scan_interval_ms = request.ScanInterval.Value,
+                            timestamp = DateTime.UtcNow,
+                            channel_id = device.ChannelId
+                        });
+                        Console.WriteLine($"RabbitMQ message sent: Device {device.Id} scan interval changed to {request.ScanInterval.Value}ms");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error sending RabbitMQ message: {ex.Message}");
+                    }
+                }
+
+                var response = new DeviceEditResponse
+                {
+                    Success = true,
+                    Message = "Устройство успешно обновлено",
+                    Device = new DeviceDetails
+                    {
+                        Id = device.Id,
+                        Name = device.Name,
+                        Comment = device.Comment,
+                        TrustedBefore = device.TrustedBefore,
+                        IpAddress = device.Channel?.Ip,
+                        NetworkPort = device.Channel?.Port,
+                        KoeffTrans = deviceSetting?.KoeffTrans ?? 1.0,
+                        ScanInterval = deviceSetting?.ScanInterval ?? 10000,
+                        ChannelId = device.ChannelId,
+                        ChannelName = device.Channel?.Name,
+                        Active = device.Active,
+                        SerialNo = device.SerialNo,
+                        InstallationDate = device.InstallationDate?.ToDateTime(TimeOnly.MinValue),
+                        LastReceive = device.LastReceive
+                    }
+                };
+
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
         }
 
         private List<DeviceDetailParam> GetElectricalDeviceDetailParameters(long deviceId)

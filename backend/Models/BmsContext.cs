@@ -176,6 +176,11 @@ public partial class BmsContext : DbContext
                 .HasForeignKey(d => d.DeviceTypeId)
                 .OnDelete(DeleteBehavior.SetNull)
                 .HasConstraintName("device_type_id_fkey");
+            
+            entity.HasOne(d => d.Channel).WithMany()
+                .HasForeignKey(d => d.ChannelId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("channel_id");
         });
 
         modelBuilder.Entity<DeviceDatum>(entity =>

@@ -71,4 +71,6 @@ public partial class Device
     public virtual Object Parent { get; set; } = null!;
 
     public virtual DeviceType? DeviceType { get; set; }
+
+    public virtual Channel Channel { get; set; } = null!;
 }
