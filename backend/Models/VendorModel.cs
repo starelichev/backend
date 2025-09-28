@@ -22,5 +22,10 @@ public partial class VendorModel
     /// </summary>
     public string? Comment { get; set; }
 
+    /// <summary>
+    /// JSON с описанием выводимых полей для конкретного устройства
+    /// </summary>
+    public string? PlateInfo { get; set; }
+
     public virtual Vendor Vendor { get; set; } = null!;
 }

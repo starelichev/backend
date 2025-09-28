@@ -105,41 +105,47 @@ namespace backend.Controllers
 
                 if (!meterNames.Any()) return 0;
 
-                // Получаем начальные показания (самые ранние записи в периоде)
-                var startData = _context.ElectricityDeviceData
-                    .Include(ed => ed.Device)
-                    .Where(ed => ed.TimeReading >= startDate && ed.TimeReading <= endDate)
-                    .Where(ed => meterNames.Contains(ed.Device.Name))
-                    .OrderBy(ed => ed.TimeReading)
-                    .ToList();
-
-                // Получаем конечные показания (самые поздние записи в периоде)
-                var endData = _context.ElectricityDeviceData
-                    .Include(ed => ed.Device)
-                    .Where(ed => ed.TimeReading >= startDate && ed.TimeReading <= endDate)
-                    .Where(ed => meterNames.Contains(ed.Device.Name))
-                    .OrderByDescending(ed => ed.TimeReading)
-                    .ToList();
-
-                Console.WriteLine($"Start data count: {startData.Count}");
-                Console.WriteLine($"End data count: {endData.Count}");
-
                 decimal totalConsumption = 0;
 
-                // Для каждой площадки с несколькими счетчиками суммируем потребление
+                // Для каждого счетчика получаем данные через хранимую функцию
                 foreach (var meterName in meterNames)
                 {
-                    var meterStartData = startData.FirstOrDefault(ed => ed.Device.Name == meterName);
-                    var meterEndData = endData.FirstOrDefault(ed => ed.Device.Name == meterName);
+                    var device = _context.Devices.FirstOrDefault(d => d.Name == meterName);
+                    if (device == null) continue;
 
-                    Console.WriteLine($"Meter: {meterName}");
-                    Console.WriteLine($"  Start data: {(meterStartData != null ? $"Time: {meterStartData.TimeReading}, AllEnergy: {meterStartData.AllEnergy}" : "NULL")}");
-                    Console.WriteLine($"  End data: {(meterEndData != null ? $"Time: {meterEndData.TimeReading}, AllEnergy: {meterEndData.AllEnergy}" : "NULL")}");
+                    Console.WriteLine($"Getting energy data for device: {meterName} (ID: {device.Id})");
 
-                    if (meterStartData != null && meterEndData != null)
+                    // Вызываем хранимую функцию для получения данных о расходе энергии
+                    var energyData = GetEnergyDataFromStoredFunction(device.Id);
+                    
+                    if (energyData != null)
                     {
-                        var consumption = meterEndData.AllEnergy - meterStartData.AllEnergy;
-                        Console.WriteLine($"  Consumption: {consumption}");
+                        // Определяем, какой период нас интересует
+                        var now = DateTime.Now;
+                        var currentMonth = new DateTime(now.Year, now.Month, 1);
+                        var previousMonth = currentMonth.AddMonths(-1);
+                        
+                        decimal consumption = 0;
+                        
+                        if (startDate >= currentMonth)
+                        {
+                            // Запрашиваем данные за текущий месяц
+                            consumption = energyData.AllEnergyCurrent;
+                            Console.WriteLine($"  Current month consumption: {consumption}");
+                        }
+                        else if (startDate >= previousMonth && endDate < currentMonth)
+                        {
+                            // Запрашиваем данные за предыдущий месяц
+                            consumption = energyData.AllEnergyLast;
+                            Console.WriteLine($"  Previous month consumption: {consumption}");
+                        }
+                        else
+                        {
+                            // Для более старых данных используем таблицу consumption_by_month
+                            consumption = GetHistoricalConsumption(device.Id, startDate, endDate);
+                            Console.WriteLine($"  Historical consumption: {consumption}");
+                        }
+                        
                         totalConsumption += Math.Max(0, consumption);
                     }
                 }
@@ -152,6 +158,41 @@ namespace backend.Controllers
             catch (Exception ex)
             {
                 Console.WriteLine($"Ошибка при расчете потребления электричества для площадки {siteName}: {ex.Message}");
+                return 0;
+            }
+        }
+
+        private EnergyIntervalData? GetEnergyDataFromStoredFunction(long deviceId)
+        {
+            try
+            {
+                // Вызываем хранимую функцию _electro_get_energy_interval
+                var result = _context.Database.SqlQueryRaw<EnergyIntervalData>(
+                    "SELECT * FROM _electro_get_energy_interval({0})", deviceId).FirstOrDefault();
+                
+                return result;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка при вызове хранимой функции для устройства {deviceId}: {ex.Message}");
+                return null;
+            }
+        }
+
+        private decimal GetHistoricalConsumption(long deviceId, DateTime startDate, DateTime endDate)
+        {
+            try
+            {
+                // Получаем данные из таблицы consumption_by_month
+                var consumption = _context.Database.SqlQueryRaw<decimal>(
+                    "SELECT COALESCE(SUM(consumption), 0) FROM consumption_by_month WHERE device_id = {0} AND consumption_date >= {1} AND consumption_date <= {2}",
+                    deviceId, startDate, endDate).FirstOrDefault();
+                
+                return consumption;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка при получении исторических данных для устройства {deviceId}: {ex.Message}");
                 return 0;
             }
         }

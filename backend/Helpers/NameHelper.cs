@@ -115,5 +115,125 @@ namespace backend.Helpers
                 _ => parameterName
             };
         }
+
+        public static string GetParameterUnit(string parameterName)
+        {
+            return parameterName switch
+            {
+                // Напряжения - В, 1 знак после запятой
+                "UL1N" => "В",
+                "UL2N" => "В",
+                "UL3N" => "В",
+                "UL1L2" => "В",
+                "UL2L3" => "В",
+                "UL3L1" => "В",
+                
+                // Токи - А, 1 знак после запятой
+                "IL1" => "А",
+                "IL2" => "А",
+                "IL3" => "А",
+                
+                // Активные мощности - кВт, 1 знак после запятой
+                "PL1" => "кВт",
+                "PL2" => "кВт",
+                "PL3" => "кВт",
+                "PSum" => "кВт",
+                
+                // Реактивные мощности - кВар, 1 знак после запятой
+                "QL1" => "кВар",
+                "QL2" => "кВар",
+                "QL3" => "кВар",
+                "QSum" => "кВар",
+                
+                // Полные мощности - кВА, 1 знак после запятой
+                "Aq1" => "кВА",
+                "Aq2" => "кВА",
+                "Aq3" => "кВА",
+                
+                // Активная энергия - кВт⋅ч, 0 знаков после запятой
+                "AllEnergy" => "кВт⋅ч",
+                "AllEnergyK" => "кВт⋅ч",
+                "RqcL1" => "кВт⋅ч",
+                "RqcL2" => "кВт⋅ч",
+                "RqcL3" => "кВт⋅ч",
+                "RqdL1" => "кВт⋅ч",
+                "RqdL2" => "кВт⋅ч",
+                "RqdL3" => "кВт⋅ч",
+                
+                // Реактивная энергия - кВар⋅ч, 0 знаков после запятой
+                "ReactiveEnergySum" => "кВар⋅ч",
+                "ReactQIL1" => "кВар⋅ч",
+                "ReactQIL2" => "кВар⋅ч",
+                "ReactQIL3" => "кВар⋅ч",
+                "ReactQCL1" => "кВар⋅ч",
+                "ReactQCL2" => "кВар⋅ч",
+                "ReactQCL3" => "кВар⋅ч",
+                
+                // Остальные параметры
+                "Freq" => "Гц",
+                "FundPfCf1" => "",
+                "FundPfCf2" => "",
+                "FundPfCf3" => "",
+                "RotationField" => "",
+                "HUL1" => "%",
+                "HUL2" => "%",
+                "HUL3" => "%",
+                "HIL1" => "%",
+                "HIL2" => "%",
+                "HIL3" => "%",
+                "Angle1" => "°",
+                "Angle2" => "°",
+                "Angle3" => "°",
+                _ => ""
+            };
+        }
+
+        public static int GetParameterDecimalPlaces(string parameterName)
+        {
+            return parameterName switch
+            {
+                // Напряжения - 1 знак после запятой
+                "UL1N" or "UL2N" or "UL3N" or "UL1L2" or "UL2L3" or "UL3L1" => 1,
+                
+                // Токи - 1 знак после запятой
+                "IL1" or "IL2" or "IL3" => 1,
+                
+                // Активные мощности - 1 знак после запятой
+                "PL1" or "PL2" or "PL3" or "PSum" => 1,
+                
+                // Реактивные мощности - 1 знак после запятой
+                "QL1" or "QL2" or "QL3" or "QSum" => 1,
+                
+                // Полные мощности - 1 знак после запятой
+                "Aq1" or "Aq2" or "Aq3" => 1,
+                
+                // Энергии - 0 знаков после запятой
+                "AllEnergy" or "AllEnergyK" or "ReactiveEnergySum" or
+                "RqcL1" or "RqcL2" or "RqcL3" or "RqdL1" or "RqdL2" or "RqdL3" or
+                "ReactQIL1" or "ReactQIL2" or "ReactQIL3" or "ReactQCL1" or "ReactQCL2" or "ReactQCL3" => 0,
+                
+                // Остальные параметры - 2 знака после запятой
+                _ => 2
+            };
+        }
+
+        public static decimal ConvertToDisplayValue(decimal value, string parameterName)
+        {
+            return parameterName switch
+            {
+                // Мощности - делим на 1000 для перевода в кВт/кВар/кВА
+                "PL1" or "PL2" or "PL3" or "PSum" or
+                "QL1" or "QL2" or "QL3" or "QSum" or
+                "Aq1" or "Aq2" or "Aq3" => value / 1000,
+                
+                // Энергии - делим на 1000 для перевода в кВт⋅ч/кВар⋅ч
+                "AllEnergy" or "AllEnergyK" or "ReactiveEnergySum" or
+                "RqcL1" or "RqcL2" or "RqcL3" or "RqdL1" or "RqdL2" or "RqdL3" or
+                "ReactQIL1" or "ReactQIL2" or "ReactQIL3" or "ReactQCL1" or "ReactQCL2" or "ReactQCL3" => value / 1000,
+                
+                // Остальные параметры - без изменений
+                _ => value
+            };
+        }
     }
 } 

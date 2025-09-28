@@ -32,12 +32,15 @@ namespace backend.Controllers
                 {
                     Id = o.Id,
                     Name = o.Name,
-                    Devices = o.Devices.Select(d => new DeviceDashboardDevice
-                    {
-                        Id = d.Id,
-                        Name = d.Name,
-                        StatusColor = d.Active ? "green" : "red"
-                    }).ToList()
+                    Devices = o.Devices
+                        .OrderBy(d => d.SortId ?? d.Id) // Сортируем по SortId, если null - по Id
+                        .Select(d => new DeviceDashboardDevice
+                        {
+                            Id = d.Id,
+                            Name = d.Name,
+                            StatusColor = d.Active ? "green" : "red",
+                            SortId = d.SortId
+                        }).ToList()
                 }).ToList();
 
             foreach (var dev in objects.SelectMany(obj => obj.Devices))
@@ -58,18 +61,34 @@ namespace backend.Controllers
             if (device?.DeviceType == null)
                 return new List<DeviceDashboardParam>();
 
+            // Получаем VendorModel через vendor_id
+            Dictionary<string, PlateInfoField>? plateInfo = null;
+            List<string> allowedParameters = new List<string>();
+            
+            if (device.Vendor.HasValue)
+            {
+                var vendorModel = _context.VendorModels
+                    .FirstOrDefault(vm => vm.VendorId == device.Vendor.Value);
+                
+                if (vendorModel != null)
+                {
+                    plateInfo = PlateInfoHelper.ParsePlateInfo(vendorModel.PlateInfo);
+                    allowedParameters = PlateInfoHelper.GetFilteredParameters(plateInfo);
+                }
+            }
+
             // Получаем параметры в зависимости от типа устройства
             var parameters = device.DeviceType.Type.ToLower() switch
             {
-                "electrical" => GetElectricalDeviceParameters(deviceId),
-                "gas" => GetGasDeviceParameters(deviceId),
+                "electrical" => GetElectricalDeviceParameters(deviceId, allowedParameters, plateInfo),
+                "gas" => GetGasDeviceParameters(deviceId, allowedParameters, plateInfo),
                 _ => new List<DeviceDashboardParam>()
             };
 
             return parameters.Take(6).ToList(); // Максимум 6 параметров
         }
 
-        private List<DeviceDashboardParam> GetElectricalDeviceParameters(long deviceId)
+        private List<DeviceDashboardParam> GetElectricalDeviceParameters(long deviceId, List<string> allowedParameters, Dictionary<string, PlateInfoField>? plateInfo)
         {
             var latestData = _context.ElectricityDeviceData
                 .Where(ed => ed.DeviceId == deviceId)
@@ -81,54 +100,58 @@ namespace backend.Controllers
 
             var parameters = new List<DeviceDashboardParam>();
             
-            // Определяем приоритетные параметры для отображения на карточках
-            var priorityParams = new[] { "IL1", "IL2", "IL3", "PSum", "QSum", "AllEnergy" };
-            
-            // Сначала добавляем приоритетные параметры
-            foreach (var priorityParam in priorityParams)
+            // Если есть plate_info, используем только разрешенные параметры
+            if (allowedParameters.Any())
             {
-                var prop = typeof(ElectricityDeviceDatum).GetProperty(priorityParam);
-                if (prop != null)
+                foreach (var columnName in allowedParameters)
                 {
-                    var value = prop.GetValue(latestData);
-                    if (value != null && value is decimal decimalValue)
+                    var prop = PlateInfoHelper.GetPropertyInfo<ElectricityDeviceDatum>(columnName);
+                    if (prop != null)
                     {
-                        parameters.Add(new DeviceDashboardParam
+                        var value = prop.GetValue(latestData);
+                        if (value != null && value is decimal decimalValue)
                         {
-                            Name = NameHelper.GetParameterShortName(priorityParam),
-                            Value = decimalValue.ToString("F3")
-                        });
-                        Console.WriteLine($"✅ Added priority parameter: {priorityParam} = {decimalValue}");
+                            var plateInfoField = plateInfo?.GetValueOrDefault(columnName);
+                            var displayName = NameHelper.GetParameterShortName(prop.Name);
+                            var digits = NameHelper.GetParameterDecimalPlaces(prop.Name);
+                            
+                            // Конвертируем значение для отображения (делим на 1000 для мощностей и энергий)
+                            var displayValue = NameHelper.ConvertToDisplayValue(decimalValue, prop.Name);
+                            
+                            parameters.Add(new DeviceDashboardParam
+                            {
+                                Name = displayName,
+                                Value = displayValue.ToString($"F{digits}")
+                            });
+                            Console.WriteLine($"✅ Added filtered parameter: {columnName} -> {prop.Name} = {decimalValue} (label: {displayName})");
+                        }
                     }
-                    else
-                    {
-                        Console.WriteLine($"❌ Priority parameter {priorityParam} has no value or is null");
-                    }
-                }
-                else
-                {
-                    Console.WriteLine($"❌ Priority parameter {priorityParam} property not found");
                 }
             }
-            
-            // Затем добавляем остальные параметры до достижения максимума в 6 штук
-            var remainingProperties = typeof(ElectricityDeviceDatum).GetProperties()
-                .Where(p => p.PropertyType == typeof(decimal) || p.PropertyType == typeof(decimal?))
-                .Where(p => p.Name != "Id" && p.Name != "DeviceId" && !priorityParams.Contains(p.Name));
-
-            foreach (var prop in remainingProperties)
+            else
             {
-                if (parameters.Count >= 6) break; // Максимум 6 параметров
+                // Fallback на старую логику, если нет plate_info
+                var priorityParams = new[] { "IL1", "IL2", "IL3", "PSum", "QSum", "AllEnergy" };
                 
-                var value = prop.GetValue(latestData);
-                if (value != null && value is decimal decimalValue)
+                foreach (var priorityParam in priorityParams)
                 {
-                    parameters.Add(new DeviceDashboardParam
+                    var prop = typeof(ElectricityDeviceDatum).GetProperty(priorityParam);
+                    if (prop != null)
                     {
-                        Name = NameHelper.GetParameterShortName(prop.Name),
-                        Value = decimalValue.ToString("F3")
-                    });
-                    Console.WriteLine($"➕ Added additional parameter: {prop.Name} = {decimalValue}");
+                        var value = prop.GetValue(latestData);
+                        if (value != null && value is decimal decimalValue)
+                        {
+                            var displayValue = NameHelper.ConvertToDisplayValue(decimalValue, priorityParam);
+                            var digits = NameHelper.GetParameterDecimalPlaces(priorityParam);
+                            
+                            parameters.Add(new DeviceDashboardParam
+                            {
+                                Name = NameHelper.GetParameterShortName(priorityParam),
+                                Value = displayValue.ToString($"F{digits}")
+                            });
+                            Console.WriteLine($"✅ Added priority parameter: {priorityParam} = {decimalValue} -> {displayValue}");
+                        }
+                    }
                 }
             }
 
@@ -136,7 +159,7 @@ namespace backend.Controllers
             return parameters;
         }
 
-        private List<DeviceDashboardParam> GetGasDeviceParameters(long deviceId)
+        private List<DeviceDashboardParam> GetGasDeviceParameters(long deviceId, List<string> allowedParameters, Dictionary<string, PlateInfoField>? plateInfo)
         {
             var latestData = _context.GasDeviceData
                 .Where(gd => gd.DeviceId == deviceId)
@@ -147,29 +170,59 @@ namespace backend.Controllers
                 return new List<DeviceDashboardParam>();
 
             var parameters = new List<DeviceDashboardParam>();
-            var properties = typeof(GasDeviceDatum).GetProperties()
-                .Where(p => p.PropertyType == typeof(decimal) || p.PropertyType == typeof(decimal?))
-                .Where(p => p.Name != "Id" && p.Name != "DeviceId");
-
-            foreach (var prop in properties)
+            
+            // Если есть plate_info, используем только разрешенные параметры
+            if (allowedParameters.Any())
             {
-                var value = prop.GetValue(latestData);
-                if (value != null && value is decimal decimalValue)
+                foreach (var columnName in allowedParameters)
                 {
-                    parameters.Add(new DeviceDashboardParam
+                    var prop = PlateInfoHelper.GetPropertyInfo<GasDeviceDatum>(columnName);
+                    if (prop != null)
                     {
-                        Name = NameHelper.GetParameterShortName(prop.Name),
-                        Value = decimalValue.ToString("F3")
-                    });
+                        var value = prop.GetValue(latestData);
+                        if (value != null && value is decimal decimalValue)
+                        {
+                            var plateInfoField = plateInfo?.GetValueOrDefault(columnName);
+                            var displayName = plateInfoField?.Label ?? NameHelper.GetParameterShortName(prop.Name);
+                            var digits = int.TryParse(plateInfoField?.Digit, out var digitCount) ? digitCount : 2;
+                            
+                            parameters.Add(new DeviceDashboardParam
+                            {
+                                Name = displayName,
+                                Value = decimalValue.ToString($"F{digits}")
+                            });
+                            Console.WriteLine($"✅ Added filtered gas parameter: {columnName} -> {prop.Name} = {decimalValue} (label: {displayName})");
+                        }
+                    }
                 }
-                else if (value != null && value is DateTime dateTimeValue && prop.Name == "ReadingTime")
+            }
+            else
+            {
+                // Fallback на старую логику, если нет plate_info
+                var properties = typeof(GasDeviceDatum).GetProperties()
+                    .Where(p => p.PropertyType == typeof(decimal) || p.PropertyType == typeof(decimal?))
+                    .Where(p => p.Name != "Id" && p.Name != "DeviceId");
+
+                foreach (var prop in properties)
                 {
-                    // Для времени чтения показываем только время
-                    parameters.Add(new DeviceDashboardParam
+                    var value = prop.GetValue(latestData);
+                    if (value != null && value is decimal decimalValue)
                     {
-                        Name = "Время",
-                        Value = dateTimeValue.ToString("HH:mm:ss")
-                    });
+                        parameters.Add(new DeviceDashboardParam
+                        {
+                            Name = NameHelper.GetParameterShortName(prop.Name),
+                            Value = decimalValue.ToString("F3")
+                        });
+                    }
+                    else if (value != null && value is DateTime dateTimeValue && prop.Name == "ReadingTime")
+                    {
+                        // Для времени чтения показываем только время
+                        parameters.Add(new DeviceDashboardParam
+                        {
+                            Name = "Время",
+                            Value = dateTimeValue.ToString("HH:mm:ss")
+                        });
+                    }
                 }
             }
 
@@ -206,7 +259,9 @@ namespace backend.Controllers
                     Active = device.Active,
                     SerialNo = device.SerialNo,
                     InstallationDate = device.InstallationDate?.ToDateTime(TimeOnly.MinValue),
-                    LastReceive = device.LastReceive
+                    LastReceive = device.LastReceive,
+                    SortId = device.SortId,
+                    DevAddr = deviceSetting?.DevAddr
                 };
 
                 return Ok(response);
@@ -239,6 +294,16 @@ namespace backend.Controllers
                 
                 if (request.TrustedBefore.HasValue)
                     device.TrustedBefore = request.TrustedBefore.Value;
+                
+                if (request.SortId.HasValue)
+                    device.SortId = request.SortId.Value;
+
+                // Получаем настройки устройства
+                var deviceSetting = device.DeviceSettings.FirstOrDefault();
+
+                // Обновляем DevAddr в настройках устройства
+                if (request.DevAddr.HasValue && deviceSetting != null)
+                    deviceSetting.DevAddr = request.DevAddr.Value;
 
                 // Обновляем IP-адрес и порт в канале
                 if (device.Channel != null)
@@ -251,14 +316,26 @@ namespace backend.Controllers
                 }
 
                 // Обновляем коэффициент трансформации и время опроса
-                var deviceSetting = device.DeviceSettings.FirstOrDefault();
                 bool scanIntervalChanged = false;
+                bool activeChanged = false;
+                bool koeffTransChanged = false;
                 long? oldScanInterval = deviceSetting?.ScanInterval;
+                bool oldActive = device.Active;
                 
+                // Обновляем поле Active
+                if (request.Active.HasValue)
+                {
+                    activeChanged = device.Active != request.Active.Value;
+                    device.Active = request.Active.Value;
+                }
+
                 if (deviceSetting != null)
                 {
                     if (request.KoeffTrans.HasValue)
+                    {
+                        koeffTransChanged = deviceSetting.KoeffTrans != request.KoeffTrans.Value;
                         deviceSetting.KoeffTrans = request.KoeffTrans.Value;
+                    }
                     
                     if (request.ScanInterval.HasValue)
                     {
@@ -285,45 +362,93 @@ namespace backend.Controllers
                     _context.DeviceSettings.Add(deviceSetting);
                 }
 
+                // Устанавливаем require_refresh = true при изменениях
+                if (activeChanged || scanIntervalChanged || koeffTransChanged)
+                {
+                    device.RequireRefresh = true;
+                }
+
                 _context.SaveChanges();
 
-                // Отправляем сообщение в RabbitMQ и логируем действие при изменении времени опроса
-                if (scanIntervalChanged && request.ScanInterval.HasValue)
+                // Логируем изменения и отправляем уведомления
+                if (activeChanged || scanIntervalChanged || koeffTransChanged)
                 {
                     try
                     {
-                        // Логируем действие пользователя
-                        var userAction = new UserAction
+                        // Логируем изменения
+                        if (activeChanged)
                         {
-                            UserId = request.UserId ?? 0,
-                            ActionId = 6, // ID действия "Изменение времени опроса устройства"
-                            Date = DateTime.Now,
-                            Description = $"Время опроса устройства '{device.Name}' изменено с {oldScanInterval ?? 10000} мс на {request.ScanInterval.Value} мс"
-                        };
-                        _context.UserActions.Add(userAction);
+                            var userAction = new UserAction
+                            {
+                                UserId = request.UserId ?? 0,
+                                ActionId = 7, // ID действия "Изменение статуса устройства"
+                                Date = DateTime.Now,
+                                Description = $"Статус устройства '{device.Name}' изменен с {(oldActive ? "включено" : "выключено")} на {(device.Active ? "включено" : "выключено")}"
+                            };
+                            _context.UserActions.Add(userAction);
+                        }
+
+                        if (scanIntervalChanged && request.ScanInterval.HasValue)
+                        {
+                            var userAction = new UserAction
+                            {
+                                UserId = request.UserId ?? 0,
+                                ActionId = 6, // ID действия "Изменение времени опроса устройства"
+                                Date = DateTime.Now,
+                                Description = $"Время опроса устройства '{device.Name}' изменено с {oldScanInterval ?? 10000} мс на {request.ScanInterval.Value} мс"
+                            };
+                            _context.UserActions.Add(userAction);
+                        }
+
+                        if (koeffTransChanged)
+                        {
+                            var userAction = new UserAction
+                            {
+                                UserId = request.UserId ?? 0,
+                                ActionId = 8, // ID действия "Изменение коэффициента трансформации"
+                                Date = DateTime.Now,
+                                Description = $"Коэффициент трансформации устройства '{device.Name}' изменен"
+                            };
+                            _context.UserActions.Add(userAction);
+                        }
+
                         await _context.SaveChangesAsync();
 
-                        // Отправляем уведомление через SignalR
-                        await _hubContext.Clients.Group("notifications").SendAsync("UserActionCreated", new
+                        // Отправляем уведомления через SignalR
+                        var userActions = _context.UserActions
+                            .Where(ua => ua.UserId == (request.UserId ?? 0) && ua.Date >= DateTime.Now.AddMinutes(-1))
+                            .OrderByDescending(ua => ua.Id)
+                            .Take(3)
+                            .ToList();
+
+                        foreach (var userAction in userActions)
                         {
-                            id = userAction.Id,
-                            userId = userAction.UserId,
-                            actionId = userAction.ActionId,
-                            date = userAction.Date,
-                            description = userAction.Description
-                        });
+                            await _hubContext.Clients.Group("notifications").SendAsync("UserActionCreated", new
+                            {
+                                id = userAction.Id,
+                                userId = userAction.UserId,
+                                actionId = userAction.ActionId,
+                                date = userAction.Date,
+                                description = userAction.Description
+                            });
+                        }
 
                         // Отправляем сообщение в RabbitMQ
-                        _rabbitMQService.SendMessage("device_scan_interval_update", new
+                        _rabbitMQService.SendMessage("device_settings_update", new
                         {
                             device_id = device.Id,
                             device_name = device.Name,
+                            active_changed = activeChanged,
+                            scan_interval_changed = scanIntervalChanged,
+                            koeff_trans_changed = koeffTransChanged,
                             old_scan_interval_ms = oldScanInterval,
-                            new_scan_interval_ms = request.ScanInterval.Value,
-                            timestamp = DateTime.UtcNow,
+                            new_scan_interval_ms = request.ScanInterval,
+                            old_active = oldActive,
+                            new_active = device.Active,
+                            timestamp = DateTime.Now,
                             channel_id = device.ChannelId
                         });
-                        Console.WriteLine($"RabbitMQ message sent: Device {device.Id} scan interval changed to {request.ScanInterval.Value}ms");
+                        Console.WriteLine($"RabbitMQ message sent: Device {device.Id} settings updated");
                     }
                     catch (Exception ex)
                     {

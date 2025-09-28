@@ -88,4 +88,11 @@ namespace backend.Contracts
         public List<SiteConsumptionData> DailyConsumption { get; set; } = new List<SiteConsumptionData>();
         public List<SiteConsumptionData> PreviousDayConsumption { get; set; } = new List<SiteConsumptionData>();
     }
+
+    // Класс для результата хранимой функции _electro_get_energy_interval
+    public class EnergyIntervalData
+    {
+        public decimal AllEnergyCurrent { get; set; }
+        public decimal AllEnergyLast { get; set; }
+    }
 } 

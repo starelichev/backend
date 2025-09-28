@@ -137,6 +137,10 @@ public partial class BmsContext : DbContext
             entity.Property(e => e.Active)
                 .HasDefaultValue(true)
                 .HasColumnName("active");
+            entity.Property(e => e.RequireRefresh)
+                .HasDefaultValue(false)
+                .HasComment("Требуется обновление настроек устройства")
+                .HasColumnName("require_refresh");
             entity.Property(e => e.ChannelId)
                 .HasDefaultValue(0L)
                 .HasComment("ID канала передачи данных (channel)")
@@ -166,6 +170,9 @@ public partial class BmsContext : DbContext
             entity.Property(e => e.DeviceTypeId)
                 .HasComment("ID типа устройства (electrical, gas, water)")
                 .HasColumnName("device_type_id");
+            entity.Property(e => e.SortId)
+                .HasComment("ID для сортировки устройств на дашборде")
+                .HasColumnName("sort_id");
 
             entity.HasOne(d => d.Parent).WithMany(p => p.Devices)
                 .HasForeignKey(d => d.ParentId)
@@ -181,6 +188,11 @@ public partial class BmsContext : DbContext
                 .HasForeignKey(d => d.ChannelId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .HasConstraintName("channel_id");
+            
+            entity.HasOne(d => d.VendorModel).WithMany()
+                .HasForeignKey(d => d.Vendor)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasConstraintName("device_vendor_model_fkey");
         });
 
         modelBuilder.Entity<DeviceDatum>(entity =>
@@ -540,7 +552,7 @@ public partial class BmsContext : DbContext
             entity.Property(e => e.ReadingTime)
                 .HasDefaultValueSql("now()")
                 .HasColumnType("timestamp without time zone")
-                .HasColumnName("reading_time");
+                .HasColumnName("time_reading");
             entity.Property(e => e.StandardVolume).HasColumnName("standard_volume");
             entity.Property(e => e.TemperatureGas).HasColumnName("temperature_gas");
             entity.Property(e => e.WorkingVolume).HasColumnName("working_volume");
@@ -782,6 +794,10 @@ public partial class BmsContext : DbContext
                 .HasColumnType("character varying")
                 .HasColumnName("name");
             entity.Property(e => e.VendorId).HasColumnName("vendor_id");
+            entity.Property(e => e.PlateInfo)
+                .HasComment("JSON с описанием выводимых полей для конкретного устройства")
+                .HasColumnType("json")
+                .HasColumnName("plate_info");
 
             entity.HasOne(d => d.Vendor).WithMany(p => p.VendorModels)
                 .HasForeignKey(d => d.VendorId)

@@ -32,58 +32,186 @@ public class DeviceDataService : IDeviceDataService
     {
         try
         {
-            // Получаем все устройства
+            // Получаем все устройства с их типами
             var devices = await _context.Devices
                 .Include(d => d.DeviceSettings)
                 .Include(d => d.Parent)
+                .Include(d => d.DeviceType)
                 .ToListAsync();
 
             var latestDeviceData = new List<object>();
 
             foreach (var device in devices)
             {
-                // Получаем последнюю запись электрических данных для устройства напрямую
-                var latestDatum = await _context.ElectricityDeviceData
-                    .Where(ed => ed.DeviceId == device.Id)
-                    .OrderByDescending(ed => ed.TimeReading)
-                    .FirstOrDefaultAsync();
-
-                if (latestDatum != null)
+                // Получаем plate_info для фильтрации параметров
+                Dictionary<string, PlateInfoField>? plateInfo = null;
+                List<string> allowedParameters = new List<string>();
+                
+                if (device.Vendor.HasValue)
                 {
-                    var deviceParameters = new List<object>();
-
-                    // Извлекаем все числовые значения из последней записи
-                    foreach (var prop in latestDatum.GetType().GetProperties())
+                    var vendorModel = await _context.VendorModels
+                        .FirstOrDefaultAsync(vm => vm.VendorId == device.Vendor.Value);
+                    
+                    if (vendorModel != null)
                     {
-                        // Проверяем, является ли свойство числовым типом (double, decimal, float)
-                        // И исключаем Id, DeviceId, TimeReading и навигационные свойства
-                        if ((prop.PropertyType == typeof(double) || prop.PropertyType == typeof(decimal) || prop.PropertyType == typeof(float) ||
-                             prop.PropertyType == typeof(double?) || prop.PropertyType == typeof(decimal?) || prop.PropertyType == typeof(float?)) &&
-                            prop.Name != "Id" && prop.Name != "DeviceId" && prop.Name != "TimeReading" && prop.Name != "Device")
+                        plateInfo = PlateInfoHelper.ParsePlateInfo(vendorModel.PlateInfo);
+                        allowedParameters = PlateInfoHelper.GetFilteredParameters(plateInfo);
+                    }
+                }
+
+                var deviceParameters = new List<object>();
+
+                // Получаем параметры в зависимости от типа устройства
+                if (device.DeviceType?.Type.ToLower() == "electrical")
+                {
+                    var latestDatum = await _context.ElectricityDeviceData
+                        .Where(ed => ed.DeviceId == device.Id)
+                        .OrderByDescending(ed => ed.TimeReading)
+                        .FirstOrDefaultAsync();
+
+                    if (latestDatum != null)
+                    {
+                        // Если есть plate_info, используем только разрешенные параметры
+                        if (allowedParameters.Any())
                         {
-                            var value = prop.GetValue(latestDatum);
-                            // Отправляем все параметры, даже если значение null
-                            var numericValue = value != null ? Math.Round(Convert.ToDouble(value), 3) : 0.0;
-                            
-                            // Используем готовые хелперы для названий и единиц измерения
-                            deviceParameters.Add(new
+                            foreach (var columnName in allowedParameters)
                             {
-                                parameterName = NameHelper.GetParameterFullName(prop.Name),
-                                parameterShortName = NameHelper.GetParameterShortName(prop.Name),
-                                parameterCode = prop.Name,
-                                value = numericValue,
-                                unit = GetParameterUnit(prop.Name),
-                                hasValue = value != null
-                            });
+                                var prop = PlateInfoHelper.GetPropertyInfo<ElectricityDeviceDatum>(columnName);
+                                if (prop != null)
+                                {
+                                    var value = prop.GetValue(latestDatum);
+                                    if (value != null && value is decimal decimalValue)
+                                    {
+                                        var plateInfoField = plateInfo?.GetValueOrDefault(columnName);
+                                        var displayName = NameHelper.GetParameterFullName(prop.Name);
+                                        var shortName = NameHelper.GetParameterShortName(prop.Name);
+                                        var digits = NameHelper.GetParameterDecimalPlaces(prop.Name);
+                                        
+                                        // Конвертируем значение для отображения (делим на 1000 для мощностей и энергий)
+                                        var displayValue = NameHelper.ConvertToDisplayValue(decimalValue, prop.Name);
+                                        
+                                        deviceParameters.Add(new
+                                        {
+                                            parameterName = displayName,
+                                            parameterShortName = shortName,
+                                            parameterCode = prop.Name,
+                                            value = Math.Round(Convert.ToDouble(displayValue), digits),
+                                            unit = NameHelper.GetParameterUnit(prop.Name),
+                                            hasValue = true
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Fallback на старую логику, если нет plate_info
+                            foreach (var prop in latestDatum.GetType().GetProperties())
+                            {
+                                if ((prop.PropertyType == typeof(double) || prop.PropertyType == typeof(decimal) || prop.PropertyType == typeof(float) ||
+                                     prop.PropertyType == typeof(double?) || prop.PropertyType == typeof(decimal?) || prop.PropertyType == typeof(float?)) &&
+                                    prop.Name != "Id" && prop.Name != "DeviceId" && prop.Name != "TimeReading" && prop.Name != "Device")
+                                {
+                                    var value = prop.GetValue(latestDatum);
+                                    var numericValue = value != null ? Math.Round(Convert.ToDouble(value), 3) : 0.0;
+                                    
+                                    var displayValue = NameHelper.ConvertToDisplayValue(Convert.ToDecimal(numericValue), prop.Name);
+                                    var digits = NameHelper.GetParameterDecimalPlaces(prop.Name);
+                                    
+                                    deviceParameters.Add(new
+                                    {
+                                        parameterName = NameHelper.GetParameterFullName(prop.Name),
+                                        parameterShortName = NameHelper.GetParameterShortName(prop.Name),
+                                        parameterCode = prop.Name,
+                                        value = Math.Round(Convert.ToDouble(displayValue), digits),
+                                        unit = NameHelper.GetParameterUnit(prop.Name),
+                                        hasValue = value != null
+                                    });
+                                }
+                            }
                         }
                     }
+                }
+                else if (device.DeviceType?.Type.ToLower() == "gas")
+                {
+                    var latestDatum = await _context.GasDeviceData
+                        .Where(gd => gd.DeviceId == device.Id)
+                        .OrderByDescending(gd => gd.ReadingTime)
+                        .FirstOrDefaultAsync();
 
+                    if (latestDatum != null)
+                    {
+                        // Если есть plate_info, используем только разрешенные параметры
+                        if (allowedParameters.Any())
+                        {
+                            foreach (var columnName in allowedParameters)
+                            {
+                                var prop = PlateInfoHelper.GetPropertyInfo<GasDeviceDatum>(columnName);
+                                if (prop != null)
+                                {
+                                    var value = prop.GetValue(latestDatum);
+                                    if (value != null && value is decimal decimalValue)
+                                    {
+                                        var plateInfoField = plateInfo?.GetValueOrDefault(columnName);
+                                        var displayName = NameHelper.GetParameterFullName(prop.Name);
+                                        var shortName = NameHelper.GetParameterShortName(prop.Name);
+                                        var digits = NameHelper.GetParameterDecimalPlaces(prop.Name);
+                                        
+                                        // Конвертируем значение для отображения (делим на 1000 для мощностей и энергий)
+                                        var displayValue = NameHelper.ConvertToDisplayValue(decimalValue, prop.Name);
+                                        
+                                        deviceParameters.Add(new
+                                        {
+                                            parameterName = displayName,
+                                            parameterShortName = shortName,
+                                            parameterCode = prop.Name,
+                                            value = Math.Round(Convert.ToDouble(displayValue), digits),
+                                            unit = NameHelper.GetParameterUnit(prop.Name),
+                                            hasValue = true
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Fallback на старую логику, если нет plate_info
+                            foreach (var prop in latestDatum.GetType().GetProperties())
+                            {
+                                if ((prop.PropertyType == typeof(double) || prop.PropertyType == typeof(decimal) || prop.PropertyType == typeof(float) ||
+                                     prop.PropertyType == typeof(double?) || prop.PropertyType == typeof(decimal?) || prop.PropertyType == typeof(float?)) &&
+                                    prop.Name != "Id" && prop.Name != "DeviceId" && prop.Name != "ReadingTime" && prop.Name != "Device")
+                                {
+                                    var value = prop.GetValue(latestDatum);
+                                    var numericValue = value != null ? Math.Round(Convert.ToDouble(value), 3) : 0.0;
+                                    
+                                    var displayValue = NameHelper.ConvertToDisplayValue(Convert.ToDecimal(numericValue), prop.Name);
+                                    var digits = NameHelper.GetParameterDecimalPlaces(prop.Name);
+                                    
+                                    deviceParameters.Add(new
+                                    {
+                                        parameterName = NameHelper.GetParameterFullName(prop.Name),
+                                        parameterShortName = NameHelper.GetParameterShortName(prop.Name),
+                                        parameterCode = prop.Name,
+                                        value = Math.Round(Convert.ToDouble(displayValue), digits),
+                                        unit = NameHelper.GetParameterUnit(prop.Name),
+                                        hasValue = value != null
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (deviceParameters.Any())
+                {
                     latestDeviceData.Add(new
                     {
                         deviceId = device.Id,
                         deviceName = device.Name,
                         objectName = device.Parent?.Name,
                         statusColor = device.Active ? "green" : "red",
+                        sortId = device.SortId, // Добавляем SortId для сортировки на фронтенде
                         averageValues = deviceParameters.ToDictionary(p => ((dynamic)p).parameterCode, p => ((dynamic)p).value), // Для совместимости с фронтендом
                         parameters = deviceParameters, // Полная информация о параметрах
                         lastUpdate = DateTime.Now
@@ -100,21 +228,6 @@ public class DeviceDataService : IDeviceDataService
         }
     }
 
-    private string GetParameterUnit(string parameterName)
-    {
-        return parameterName switch
-        {
-            var p when p.StartsWith("U") => "В",
-            var p when p.StartsWith("I") => "А",
-            var p when p.StartsWith("P") || p.StartsWith("Q") || p.StartsWith("Aq") => "Вт",
-            var p when p.Contains("Energy") => "кВт⋅ч",
-            "Freq" => "Гц",
-            var p when p.StartsWith("FundPfCf") => "",
-            var p when p.StartsWith("HU") || p.StartsWith("HI") => "%",
-            var p when p.StartsWith("Angle") => "°",
-            _ => ""
-        };
-    }
 
     public async Task UpdateScanInterval(int newIntervalMs)
     {

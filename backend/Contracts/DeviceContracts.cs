@@ -10,6 +10,9 @@ namespace backend.Contracts
         public int? NetworkPort { get; set; }
         public double? KoeffTrans { get; set; }
         public long? ScanInterval { get; set; }
+        public int? SortId { get; set; }
+        public int? DevAddr { get; set; }
+        public bool? Active { get; set; }
         public long? UserId { get; set; }
     }
 
@@ -36,5 +39,7 @@ namespace backend.Contracts
         public string? SerialNo { get; set; }
         public DateTime? InstallationDate { get; set; }
         public DateTime? LastReceive { get; set; }
+        public int? SortId { get; set; }
+        public int? DevAddr { get; set; }
     }
 }

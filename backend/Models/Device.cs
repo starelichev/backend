@@ -54,11 +54,21 @@ public partial class Device
     public bool Active { get; set; }
 
     /// <summary>
+    /// Требуется обновление настроек устройства
+    /// </summary>
+    public bool RequireRefresh { get; set; }
+
+    /// <summary>
     /// Последний опрос
     /// </summary>
     public DateTime? LastReceive { get; set; }
 
     public DateOnly? InstallationDate { get; set; }
+
+    /// <summary>
+    /// ID для сортировки устройств на дашборде
+    /// </summary>
+    public int? SortId { get; set; }
 
     public virtual ICollection<DeviceDatum> DeviceData { get; set; } = new List<DeviceDatum>();
 
@@ -73,4 +83,6 @@ public partial class Device
     public virtual DeviceType? DeviceType { get; set; }
 
     public virtual Channel Channel { get; set; } = null!;
+
+    public virtual VendorModel? VendorModel { get; set; }
 }

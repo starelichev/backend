@@ -142,7 +142,9 @@ namespace backend.Controllers
             return period switch
             {
                 "today" => (now.Date, now.Date.AddDays(1).AddSeconds(-1)),
+                "lastDay" => (now.AddDays(-1), now),
                 "last2days" => (now.AddDays(-2), now),
+                "lastWeek" => (now.AddDays(-7), now),
                 "last2weeks" => (now.AddDays(-14), now),
                 "lastMonth" => (now.AddMonths(-1), now),
                 "sinceMonthStart" => (new DateTime(now.Year, now.Month, 1), now),

@@ -115,7 +115,7 @@ namespace backend.Controllers
                 _rabbitMQService.SendMessage("scan_interval_update", new
                 {
                     scan_interval_ms = request.ScanIntervalMs,
-                    timestamp = DateTime.UtcNow,
+                    timestamp = DateTime.Now,
                     user_id = request.UserId
                 });
 

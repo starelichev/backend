@@ -17,6 +17,7 @@ namespace backend.Contracts
         public long Id { get; set; }
         public string? Name { get; set; }
         public string? StatusColor { get; set; } // red, blue, green
+        public int? SortId { get; set; }
         public List<DeviceDashboardParam> Params { get; set; } = new();
     }
 

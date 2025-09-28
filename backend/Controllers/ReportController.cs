@@ -21,16 +21,71 @@ public class ReportController : ControllerBase
         ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
     }
 
+    private string FormatDecimal(decimal value, int decimals = 3)
+    {
+        // Используем инвариантную культуру и заменяем точку на запятую
+        var formatted = value.ToString($"F{decimals}", System.Globalization.CultureInfo.InvariantCulture);
+        return formatted.Replace(".", ",");
+    }
+
     [HttpGet("list")]
-    public async Task<ActionResult<ReportListResponse>> GetReports()
+    public async Task<ActionResult<ReportListResponse>> GetReports(
+        [FromQuery] string? sortBy = "date", 
+        [FromQuery] string? sortOrder = "desc",
+        [FromQuery] string? periodType = "new",
+        [FromQuery] DateTime? startDate = null,
+        [FromQuery] DateTime? endDate = null)
     {
         try
         {
-            var reportsQuery = _context.Reports
-                .Include(r => r.CreatedByUser)
-                .OrderByDescending(r => r.CreatedAt);
+            Console.WriteLine($"Получены параметры: sortBy='{sortBy}', sortOrder='{sortOrder}', periodType='{periodType}', startDate={startDate}, endDate={endDate}");
+            
+            var baseQuery = _context.Reports
+                .Include(r => r.CreatedByUser);
 
-            var reportsData = await reportsQuery.ToListAsync(); // Materialize data here
+            // Применяем фильтрацию по дате
+            IQueryable<Report> reportsQuery = baseQuery;
+            
+            // Фильтрация по пользовательскому периоду
+            if (startDate.HasValue && endDate.HasValue)
+            {
+                reportsQuery = baseQuery.Where(r => r.CreatedAt >= startDate.Value && r.CreatedAt <= endDate.Value);
+                Console.WriteLine($"Фильтр: пользовательский период с {startDate} по {endDate}");
+            }
+            else
+            {
+                Console.WriteLine("Фильтр: без ограничений по дате");
+            }
+
+            // Применяем сортировку
+            IQueryable<Report> sortedQuery;
+            switch (sortBy?.ToLower())
+            {
+                case "date":
+                    Console.WriteLine("Применяем сортировку по дате");
+                    sortedQuery = sortOrder?.ToLower() == "asc" 
+                        ? reportsQuery.OrderBy(r => r.CreatedAt)
+                        : reportsQuery.OrderByDescending(r => r.CreatedAt);
+                    break;
+                case "name":
+                    Console.WriteLine("Применяем сортировку по названию");
+                    sortedQuery = sortOrder?.ToLower() == "asc"
+                        ? reportsQuery.OrderBy(r => r.Name)
+                        : reportsQuery.OrderByDescending(r => r.Name);
+                    break;
+                case "size":
+                    Console.WriteLine("Применяем сортировку по размеру");
+                    sortedQuery = sortOrder?.ToLower() == "asc"
+                        ? reportsQuery.OrderBy(r => r.Size)
+                        : reportsQuery.OrderByDescending(r => r.Size);
+                    break;
+                default:
+                    Console.WriteLine("Применяем сортировку по умолчанию (дата desc)");
+                    sortedQuery = reportsQuery.OrderByDescending(r => r.CreatedAt);
+                    break;
+            }
+
+            var reportsData = await sortedQuery.ToListAsync(); // Materialize data here
 
             var reports = reportsData.Select(r => new ReportResponse
             {
@@ -39,7 +94,7 @@ public class ReportController : ControllerBase
                 Name = r.Name,
                 Size = r.Size,
                 Path = r.Path,
-                CreatedAt = r.CreatedAt ?? DateTime.UtcNow,
+                CreatedAt = r.CreatedAt ?? DateTime.Now,
                 CreatedByUserName = r.CreatedByUser?.Name ?? "Неизвестный пользователь",
                 CreatedByUserSurname = r.CreatedByUser?.Surname ?? ""
             }).ToList();
@@ -117,26 +172,26 @@ public class ReportController : ControllerBase
                 foreach (var item in data)
                 {
                     worksheet.Cells[row, 1].Value = item.TimeReading.ToString("dd.MM.yyyy HH:mm:ss");
-                    worksheet.Cells[row, 2].Value = item.UL1N.ToString("F3");
-                    worksheet.Cells[row, 3].Value = item.UL2N.ToString("F3");
-                    worksheet.Cells[row, 4].Value = item.UL3N.ToString("F3");
-                    worksheet.Cells[row, 5].Value = item.UL1L2.ToString("F3") ?? "0.000";
-                    worksheet.Cells[row, 6].Value = item.UL2L3.ToString("F3") ?? "0.000";
-                    worksheet.Cells[row, 7].Value = item.UL3L1.ToString("F3") ?? "0.000";
-                    worksheet.Cells[row, 8].Value = item.IL1.ToString("F3") ?? "0.000";
-                    worksheet.Cells[row, 9].Value = item.IL2.ToString("F3") ?? "0.000";
-                    worksheet.Cells[row, 10].Value = item.IL3.ToString("F3") ?? "0.000";
-                    worksheet.Cells[row, 11].Value = item.PL1.ToString("F3") ?? "0.000";
-                    worksheet.Cells[row, 12].Value = item.PL2.ToString("F3") ?? "0.000";
-                    worksheet.Cells[row, 13].Value = item.PL3.ToString("F3") ?? "0.000";
-                    worksheet.Cells[row, 14].Value = item.PSum.ToString("F3") ?? "0.000";
-                    worksheet.Cells[row, 15].Value = item.QL1.ToString("F3") ?? "0.000";
-                    worksheet.Cells[row, 16].Value = item.QL2.ToString("F3") ?? "0.000";
-                    worksheet.Cells[row, 17].Value = item.QL3.ToString("F3") ?? "0.000";
-                    worksheet.Cells[row, 18].Value = item.QSum.ToString("F3");
-                    worksheet.Cells[row, 19].Value = item.AllEnergy.ToString("F3");
-                    worksheet.Cells[row, 20].Value = item.ReactiveEnergySum.ToString("F3");
-                    worksheet.Cells[row, 21].Value = item.Freq.ToString("F3");
+                    worksheet.Cells[row, 2].Value = FormatDecimal(item.UL1N);
+                    worksheet.Cells[row, 3].Value = FormatDecimal(item.UL2N);
+                    worksheet.Cells[row, 4].Value = FormatDecimal(item.UL3N);
+                    worksheet.Cells[row, 5].Value = FormatDecimal(item.UL1L2);
+                    worksheet.Cells[row, 6].Value = FormatDecimal(item.UL2L3);
+                    worksheet.Cells[row, 7].Value = FormatDecimal(item.UL3L1);
+                    worksheet.Cells[row, 8].Value = FormatDecimal(item.IL1);
+                    worksheet.Cells[row, 9].Value = FormatDecimal(item.IL2);
+                    worksheet.Cells[row, 10].Value = FormatDecimal(item.IL3);
+                    worksheet.Cells[row, 11].Value = FormatDecimal(item.PL1);
+                    worksheet.Cells[row, 12].Value = FormatDecimal(item.PL2);
+                    worksheet.Cells[row, 13].Value = FormatDecimal(item.PL3);
+                    worksheet.Cells[row, 14].Value = FormatDecimal(item.PSum);
+                    worksheet.Cells[row, 15].Value = FormatDecimal(item.QL1);
+                    worksheet.Cells[row, 16].Value = FormatDecimal(item.QL2);
+                    worksheet.Cells[row, 17].Value = FormatDecimal(item.QL3);
+                    worksheet.Cells[row, 18].Value = FormatDecimal(item.QSum);
+                    worksheet.Cells[row, 19].Value = FormatDecimal(item.AllEnergy);
+                    worksheet.Cells[row, 20].Value = FormatDecimal(item.ReactiveEnergySum);
+                    worksheet.Cells[row, 21].Value = FormatDecimal(item.Freq);
                     row++;
                 }
 
@@ -155,7 +210,7 @@ public class ReportController : ControllerBase
                 Name = request.Name,
                 Path = fileName,
                 Size = new FileInfo(filePath).Length,
-                CreatedAt = DateTime.Now, // Изменено с DateTime.UtcNow на DateTime.Now
+                CreatedAt = DateTime.Now,
                 CreatedByUserId = request.CreatedByUserId
             };
 
@@ -172,7 +227,7 @@ public class ReportController : ControllerBase
                 Name = report.Name,
                 Size = report.Size,
                 Path = report.Path,
-                CreatedAt = report.CreatedAt ?? DateTime.UtcNow,
+                CreatedAt = report.CreatedAt ?? DateTime.Now,
                 CreatedByUserName = user?.Name ?? "Неизвестный пользователь",
                 CreatedByUserSurname = user?.Surname ?? ""
             };
@@ -503,7 +558,7 @@ public class ReportController : ControllerBase
                     foreach (var param in request.Parameters)
                     {
                         var value = dataRow.Values.ContainsKey(param) ? dataRow.Values[param] : 0;
-                        worksheet.Cells[row, colIndex].Value = value.ToString("F3");
+                        worksheet.Cells[row, colIndex].Value = FormatDecimal(value);
                         colIndex++;
                     }
                     row++;
@@ -541,7 +596,7 @@ public class ReportController : ControllerBase
                 Name = report.Name,
                 Size = report.Size,
                 Path = report.Path,
-                CreatedAt = report.CreatedAt ?? DateTime.UtcNow,
+                CreatedAt = report.CreatedAt ?? DateTime.Now,
                 CreatedByUserName = user?.Name ?? "Неизвестный пользователь",
                 CreatedByUserSurname = user?.Surname ?? ""
             };
@@ -645,7 +700,8 @@ public class ReportController : ControllerBase
                 
                 // Создаем колонки точно как на фронтенде
                 var columns = new List<object>();
-                columns.Add("Дата и время");
+                columns.Add("Дата");
+                columns.Add("Время");
                 
                 // Для каждого параметра создаем колонку для каждого устройства
                 foreach (var paramKey in request.Parameters)
@@ -696,11 +752,13 @@ public class ReportController : ControllerBase
                 {
                     var timeGroup = timeGroups[timestamp];
                     
-                    // Колонка 1: Дата и время
-                    worksheet.Cells[row, 1].Value = timestamp.ToString("dd.MM.yyyy HH:mm:ss");
+                    // Колонка 1: Дата
+                    worksheet.Cells[row, 1].Value = timestamp.ToString("dd.MM.yyyy");
+                    // Колонка 2: Время
+                    worksheet.Cells[row, 2].Value = timestamp.ToString("HH:mm:ss");
                     
-                    // Колонки 2+: Параметры для каждого устройства
-                    int colIndex = 2;
+                    // Колонки 3+: Параметры для каждого устройства
+                    int colIndex = 3;
                     foreach (var paramKey in request.Parameters)
                     {
                         foreach (var deviceId in deviceIds)
@@ -710,11 +768,11 @@ public class ReportController : ControllerBase
                                 timeGroup[deviceId].Values.ContainsKey(paramKey))
                             {
                                 var value = timeGroup[deviceId].Values[paramKey];
-                                worksheet.Cells[row, colIndex].Value = value.ToString("F3");
+                                worksheet.Cells[row, colIndex].Value = FormatDecimal((decimal)value);
                             }
                             else
                             {
-                                worksheet.Cells[row, colIndex].Value = "0.000";
+                                worksheet.Cells[row, colIndex].Value = FormatDecimal(0);
                             }
                             colIndex++;
                         }
@@ -754,7 +812,7 @@ public class ReportController : ControllerBase
                 Name = report.Name,
                 Size = report.Size,
                 Path = report.Path,
-                CreatedAt = report.CreatedAt ?? DateTime.UtcNow,
+                CreatedAt = report.CreatedAt ?? DateTime.Now,
                 CreatedByUserName = user?.Name ?? "Неизвестный пользователь",
                 CreatedByUserSurname = user?.Surname ?? ""
             };
