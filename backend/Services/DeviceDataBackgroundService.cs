@@ -8,6 +8,7 @@ public class DeviceDataBackgroundService : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<DeviceDataBackgroundService> _logger;
+    private DateTime _lastConsumptionUpdate = DateTime.SpecifyKind(DateTime.MinValue, DateTimeKind.Utc);
 
     public DeviceDataBackgroundService(
         IServiceProvider serviceProvider,
@@ -28,8 +29,16 @@ public class DeviceDataBackgroundService : BackgroundService
                 using var scope = _serviceProvider.CreateScope();
                 var deviceDataService = scope.ServiceProvider.GetRequiredService<IDeviceDataService>();
                 
-                // Просто отправляем данные устройств каждые 10 секунд
+                // Отправляем данные устройств каждые 10 секунд
                 await deviceDataService.SendAverageDeviceData();
+                
+                // Отправляем данные расхода за сегодня каждые 10 минут (600 секунд)
+                var currentTime = DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Utc);
+                if ((currentTime - _lastConsumptionUpdate).TotalMinutes >= 10)
+                {
+                    await deviceDataService.SendConsumptionTodayData();
+                    _lastConsumptionUpdate = currentTime;
+                }
                 
                 // Ждем ровно 10 секунд до следующего цикла
                 await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);

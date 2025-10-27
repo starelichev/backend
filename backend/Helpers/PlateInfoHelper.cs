@@ -59,6 +59,7 @@ public static class PlateInfoHelper
         { "angle3", "Angle3" },
         { "all_energy_k", "AllEnergyK" },
         
+        
         // Gas device mappings
         { "working_volume", "WorkingVolume" },
         { "standard_volume", "StandardVolume" },

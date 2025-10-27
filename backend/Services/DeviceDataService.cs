@@ -10,6 +10,7 @@ public interface IDeviceDataService
 {
     Task SendAverageDeviceData();
     Task UpdateScanInterval(int newIntervalMs);
+    Task SendConsumptionTodayData();
 }
 
 public class DeviceDataService : IDeviceDataService
@@ -247,6 +248,59 @@ public class DeviceDataService : IDeviceDataService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error updating scan interval in database");
+        }
+    }
+
+    public async Task SendConsumptionTodayData()
+    {
+        try
+        {
+            var now = DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Utc);
+            var todayStart = DateTime.SpecifyKind(new DateTime(now.Year, now.Month, now.Day, 0, 0, 0), DateTimeKind.Utc);
+            
+            // Площадки с их device_id
+            var sites = new Dictionary<string, List<long>>
+            {
+                { "КВТ-Юг", new List<long> { 18, 25 } },
+                { "ЛЦ", new List<long> { 17 } },
+                { "КВТ-Восток", new List<long> { 3 } },
+                { "КВТ-Север", new List<long> { 16 } },
+                { "РСК", new List<long> { 36, 35 } }
+            };
+
+            var consumptionData = new List<object>();
+
+            foreach (var site in sites)
+            {
+                decimal totalValue = 0;
+
+                foreach (var deviceId in site.Value)
+                {
+                    var value = await _context.ConsumptionByToday
+                        .Where(c => c.DeviceId == deviceId && 
+                                    c.Dt >= todayStart && 
+                                    c.Dt <= now)
+                        .OrderByDescending(c => c.Dt)
+                        .Select(c => c.Value)
+                        .FirstOrDefaultAsync();
+
+                    totalValue += value;
+                }
+
+                consumptionData.Add(new
+                {
+                    Site = site.Key,
+                    Value = totalValue
+                });
+            }
+
+            // Отправляем данные через SignalR
+            await _hubContext.Clients.Group("notifications").SendAsync("UpdateConsumptionToday", consumptionData);
+            _logger.LogInformation("Consumption today data sent via SignalR");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Ошибка при отправке данных расхода за сегодня");
         }
     }
 } 

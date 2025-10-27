@@ -752,10 +752,13 @@ public class ReportController : ControllerBase
                 {
                     var timeGroup = timeGroups[timestamp];
                     
+                    // Конвертируем UTC в локальное время (UTC+3 для Москвы)
+                    var localTime = timestamp.AddHours(3);
+                    
                     // Колонка 1: Дата
-                    worksheet.Cells[row, 1].Value = timestamp.ToString("dd.MM.yyyy");
+                    worksheet.Cells[row, 1].Value = localTime.ToString("dd.MM.yyyy");
                     // Колонка 2: Время
-                    worksheet.Cells[row, 2].Value = timestamp.ToString("HH:mm:ss");
+                    worksheet.Cells[row, 2].Value = localTime.ToString("HH:mm:ss");
                     
                     // Колонки 3+: Параметры для каждого устройства
                     int colIndex = 3;

@@ -59,6 +59,12 @@ public partial class BmsContext : DbContext
 
     public virtual DbSet<VendorModel> VendorModels { get; set; }
 
+    public virtual DbSet<ConsumptionByDay> ConsumptionByDay { get; set; }
+
+    public virtual DbSet<ConsumptionByMonth> ConsumptionByMonth { get; set; }
+
+    public virtual DbSet<ConsumptionByToday> ConsumptionByToday { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Action>(entity =>
@@ -802,6 +808,36 @@ public partial class BmsContext : DbContext
             entity.HasOne(d => d.Vendor).WithMany(p => p.VendorModels)
                 .HasForeignKey(d => d.VendorId)
                 .HasConstraintName("vendor_models_vendors_id_fk");
+        });
+
+        modelBuilder.Entity<ConsumptionByDay>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("consumption_by_day_pkey");
+            entity.ToTable("consumption_by_day");
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.Dt).HasColumnName("dt");
+            entity.Property(e => e.Value).HasColumnName("value");
+            entity.Property(e => e.DeviceId).HasColumnName("device_id");
+        });
+
+        modelBuilder.Entity<ConsumptionByMonth>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("consumption_by_month_pkey");
+            entity.ToTable("consumption_by_month");
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.Dt).HasColumnName("dt");
+            entity.Property(e => e.Value).HasColumnName("value");
+            entity.Property(e => e.DeviceId).HasColumnName("device_id");
+        });
+
+        modelBuilder.Entity<ConsumptionByToday>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("consumption_by_today_pkey");
+            entity.ToTable("consumption_by_today");
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.Dt).HasColumnName("dt");
+            entity.Property(e => e.Value).HasColumnName("value");
+            entity.Property(e => e.DeviceId).HasColumnName("device_id");
         });
 
         OnModelCreatingPartial(modelBuilder);

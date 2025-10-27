@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using backend.Models;
 using backend.Contracts;
+using backend.Hubs;
+using Microsoft.AspNetCore.SignalR;
 using System.Linq;
 
 namespace backend.Controllers
@@ -11,10 +13,12 @@ namespace backend.Controllers
     public class DashboardController : ControllerBase
     {
         private readonly BmsContext _context;
+        private readonly IHubContext<NotificationHub> _hubContext;
         
-        public DashboardController(BmsContext context)
+        public DashboardController(BmsContext context, IHubContext<NotificationHub> hubContext)
         {
             _context = context;
+            _hubContext = hubContext;
         }
 
         [HttpGet("metrics")]
@@ -22,30 +26,32 @@ namespace backend.Controllers
         {
             try
             {
-                var now = DateTime.Now;
-                var todayStart = new DateTime(now.Year, now.Month, now.Day, 0, 0, 0);
-                var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0);
+                var now = DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Utc);
+                var todayStart = DateTime.SpecifyKind(new DateTime(now.Year, now.Month, now.Day, 0, 0, 0), DateTimeKind.Utc);
+                var monthStart = DateTime.SpecifyKind(new DateTime(now.Year, now.Month, 1, 0, 0, 0), DateTimeKind.Utc);
                 var yesterdayStart = todayStart.AddDays(-1);
                 var yesterdayEnd = todayStart.AddSeconds(-1);
                 
-                Console.WriteLine($"=== Dashboard Metrics Debug ===");
-                Console.WriteLine($"Now: {now}");
-                Console.WriteLine($"Today Start: {todayStart}");
-                Console.WriteLine($"Month Start: {monthStart}");
-                Console.WriteLine($"Yesterday Start: {yesterdayStart}");
-                Console.WriteLine($"Yesterday End: {yesterdayEnd}");
-                Console.WriteLine($"===============================");
-                
+                // Площадки с их device_id
+                var sites = new Dictionary<string, List<long>>
+                {
+                    { "КВТ-Юг", new List<long> { 18, 25 } },
+                    { "ЛЦ", new List<long> { 17 } },
+                    { "КВТ-Восток", new List<long> { 3 } },
+                    { "КВТ-Север", new List<long> { 16 } },
+                    { "РСК", new List<long> { 36, 35 } }
+                };
+
                 var response = new DashboardMetricsResponse
                 {
-                    // Расход за текущий месяц (с начала месяца)
-                    MonthlyConsumption = GetSitesConsumptionData(monthStart, now),
+                    // Расход за текущий месяц (из таблицы consumption_by_month)
+                    MonthlyConsumption = GetConsumptionForPeriod(sites, "month", monthStart, now),
                     
-                    // Расход за текущие сутки (с 00:00 сегодня)
-                    DailyConsumption = GetSitesConsumptionData(todayStart, now),
+                    // Расход за день (из consumption_by_today)
+                    DailyConsumption = GetConsumptionForPeriod(sites, "today", todayStart, now),
                     
-                    // Расход за предыдущие сутки
-                    PreviousDayConsumption = GetSitesConsumptionData(yesterdayStart, yesterdayEnd)
+                    // Расход за вчера (из consumption_by_day)
+                    PreviousDayConsumption = GetConsumptionForPeriod(sites, "day", yesterdayStart, yesterdayEnd)
                 };
 
                 return Ok(response);
@@ -54,6 +60,100 @@ namespace backend.Controllers
             {
                 return BadRequest(new { error = ex.Message });
             }
+        }
+
+        [HttpPost("metrics/update-today")]
+        public async Task<IActionResult> UpdateTodayMetrics()
+        {
+            try
+            {
+                var now = DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Utc);
+                var todayStart = DateTime.SpecifyKind(new DateTime(now.Year, now.Month, now.Day, 0, 0, 0), DateTimeKind.Utc);
+                
+                // Площадки с их device_id
+                var sites = new Dictionary<string, List<long>>
+                {
+                    { "КВТ-Юг", new List<long> { 18, 25 } },
+                    { "ЛЦ", new List<long> { 17 } },
+                    { "КВТ-Восток", new List<long> { 3 } },
+                    { "КВТ-Север", new List<long> { 16 } },
+                    { "РСК", new List<long> { 36, 35 } }
+                };
+
+                var dailyData = GetConsumptionForPeriod(sites, "today", todayStart, now);
+
+                // Отправляем обновленные данные через SignalR
+                await _hubContext.Clients.Group("notifications").SendAsync("UpdateConsumptionToday", dailyData);
+
+                return Ok(new { message = "Данные расхода за сегодня обновлены", data = dailyData });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        private List<SiteConsumptionData> GetConsumptionForPeriod(Dictionary<string, List<long>> sites, string periodType, DateTime startDate, DateTime endDate)
+        {
+            var result = new List<SiteConsumptionData>();
+
+            foreach (var site in sites)
+            {
+                decimal totalValue = 0;
+
+                foreach (var deviceId in site.Value)
+                {
+                    decimal value = 0;
+
+                    // Для месяца берем данные из consumption_by_day и суммируем все значения
+                    // Для дня и сегодня - берем последнее значение
+                    if (periodType == "month")
+                    {
+                        var monthStart = DateOnly.FromDateTime(startDate);
+                        var monthEnd = DateOnly.FromDateTime(endDate);
+    
+                        value = _context.ConsumptionByDay
+                            .Where(c => c.DeviceId == deviceId && c.Dt >= monthStart && c.Dt <= monthEnd)
+                            .Sum(c => c.Value);
+                    }
+                    else if (periodType == "day")
+                    {
+                        var yesterday = startDate.Date; // startDate: 10/26/2025 00:00
+                        var lastValue = _context.ConsumptionByDay
+                            .Where(c => c.DeviceId == deviceId && c.Dt == DateOnly.FromDateTime(yesterday))
+                            .Select(c => c.Value)
+                            .FirstOrDefault();
+    
+                        value = lastValue;
+                    }
+                    else if (periodType == "today")
+                    {
+                        var now = DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Utc);
+                        var todayStart = DateTime.SpecifyKind(new DateTime(now.Year, now.Month, now.Day, 0, 0, 0), DateTimeKind.Utc);
+
+                        var lastValue = _context.ConsumptionByToday
+                            .Where(c => c.DeviceId == deviceId && 
+                                        c.Dt >= todayStart && 
+                                        c.Dt <= now)
+                            .OrderByDescending(c => c.Dt)
+                            .Select(c => c.Value)
+                            .FirstOrDefault();
+
+                        value = lastValue;
+                    }
+
+                    totalValue += value;
+                }
+
+                result.Add(new SiteConsumptionData
+                {
+                    SiteName = site.Key,
+                    ElectricityConsumption = Math.Round(totalValue, 2),
+                    GasConsumption = 0 // Для электричества газ = 0
+                });
+            }
+
+            return result;
         }
 
         private List<SiteConsumptionData> GetSitesConsumptionData(DateTime startDate, DateTime endDate)

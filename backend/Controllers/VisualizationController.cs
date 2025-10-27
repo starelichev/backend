@@ -86,12 +86,15 @@ namespace backend.Controllers
                 {
                     Id = o.Id,
                     Name = o.Name,
-                    Devices = o.Devices.Select(d => new VisualizationDevice
-                    {
-                        Id = d.Id,
-                        Name = d.Name,
-                        Type = d.DeviceType?.Type ?? "Unknown"
-                    }).ToList()
+                    Devices = o.Devices
+                        .OrderBy(d => d.SortId ?? d.Id) // Сортируем по SortId, если null - по Id
+                        .Select(d => new VisualizationDevice
+                        {
+                            Id = d.Id,
+                            Name = d.Name,
+                            Type = d.DeviceType?.Type ?? "Unknown",
+                            SortId = d.SortId
+                        }).ToList()
                 }).ToList();
 
             return Ok(objects);
@@ -142,7 +145,8 @@ namespace backend.Controllers
             return period switch
             {
                 "today" => (now.Date, now.Date.AddDays(1).AddSeconds(-1)),
-                "lastDay" => (now.AddDays(-1), now),
+                "lastDay" => (DateTime.SpecifyKind(new DateTime(now.AddDays(-1).Year, now.AddDays(-1).Month, now.AddDays(-1).Day, 0, 0, 0), DateTimeKind.Unspecified)
+                    , DateTime.SpecifyKind(new DateTime(now.AddDays(-1).Year, now.AddDays(-1).Month, now.AddDays(-1).Day, 23, 59, 59), DateTimeKind.Unspecified)),
                 "last2days" => (now.AddDays(-2), now),
                 "lastWeek" => (now.AddDays(-7), now),
                 "last2weeks" => (now.AddDays(-14), now),
@@ -162,13 +166,14 @@ namespace backend.Controllers
             // Фильтруем по объектам
             if (objectIds != null && objectIds.Length > 0)
             {
-                query = query.Where(ed => ed.Device.Parent != null && objectIds.Contains(ed.Device.Parent.Id));
+                query = query.Where(ed => objectIds.Contains(ed.Device.Parent.Id));
             }
 
             // Фильтруем по счетчикам
             if (meterIds != null && meterIds.Length > 0)
             {
                 query = query.Where(ed => meterIds.Contains(ed.DeviceId));
+                var test = query.ToList();
             }
 
             var rawData = query

@@ -368,7 +368,7 @@ namespace backend.Controllers
                     device.RequireRefresh = true;
                 }
 
-                _context.SaveChanges();
+                await _context.SaveChangesAsync();
 
                 // Логируем изменения и отправляем уведомления
                 if (activeChanged || scanIntervalChanged || koeffTransChanged)
